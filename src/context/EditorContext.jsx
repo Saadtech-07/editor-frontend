@@ -3,6 +3,22 @@ import { FABRIC_SERIALIZATION_PROPS, getLayerObjects } from "../utils/fabricHelp
 
 const EditorContext = createContext(null);
 
+function serializeWorkspaceCanvas(canvasInstance) {
+  if (!canvasInstance) {
+    return null;
+  }
+
+  const canvasJSON = canvasInstance.toJSON(FABRIC_SERIALIZATION_PROPS);
+
+  canvasJSON.width = canvasInstance.getWidth();
+  canvasJSON.height = canvasInstance.getHeight();
+  canvasJSON.viewportTransform = Array.isArray(canvasInstance.viewportTransform)
+    ? [...canvasInstance.viewportTransform]
+    : [1, 0, 0, 1, 0, 0];
+
+  return canvasJSON;
+}
+
 export function EditorProvider({ children }) {
   const canvasRef = useRef(null);
   const [canvas, setCanvasState] = useState(null);
@@ -86,7 +102,7 @@ export function EditorProvider({ children }) {
       setWorkspaces((prev) => {
         const savedPrev = prev.map((workspace) =>
           workspace.id === activeWorkspaceId && canvas
-            ? { ...workspace, canvasJSON: canvas.toJSON(FABRIC_SERIALIZATION_PROPS) }
+            ? { ...workspace, canvasJSON: serializeWorkspaceCanvas(canvas) }
             : workspace,
         );
 
@@ -128,7 +144,7 @@ export function EditorProvider({ children }) {
       }
 
       if (canvasInstance && activeWorkspaceId) {
-        const canvasJSON = canvasInstance.toJSON(FABRIC_SERIALIZATION_PROPS);
+        const canvasJSON = serializeWorkspaceCanvas(canvasInstance);
 
         setWorkspaces((prev) =>
           prev.map((workspace) =>
@@ -156,7 +172,8 @@ export function EditorProvider({ children }) {
             ...workspace,
             canvasJSON:
               nextState.canvasJSON ??
-              (canvasInstance ? canvasInstance.toJSON(FABRIC_SERIALIZATION_PROPS) : workspace.canvasJSON),
+              serializeWorkspaceCanvas(canvasInstance) ??
+              workspace.canvasJSON,
             history: nextState.history ?? workspace.history,
             historyIndex: nextState.historyIndex ?? workspace.historyIndex,
             redoHistory: nextState.redoHistory ?? workspace.redoHistory ?? [],

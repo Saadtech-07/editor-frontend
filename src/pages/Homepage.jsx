@@ -1,7 +1,14 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, ImagePlus, Loader2, UploadCloud } from "lucide-react";
+import { ArrowRight, Copy, Edit3, FolderOpen, ImagePlus, Layers3, Trash2, UploadCloud } from "lucide-react";
 import Header from "../components/layout/Header.jsx";
+import {
+  deleteSavedProject,
+  duplicateSavedProject,
+  getWorkspaceCount,
+  listSavedProjects,
+  renameSavedProject,
+} from "../utils/projectStorage.js";
 
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -24,11 +31,35 @@ function PreviewPanel({ title, imageUrl, emptyLabel }) {
   );
 }
 
-export default function Homepage({ imageState, onUpload, onProcessed }) {
+function formatEditedTime(value) {
+  if (!value) {
+    return "Not edited yet";
+  }
+
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(value));
+  } catch (error) {
+    return "Recently edited";
+  }
+}
+
+export default function Homepage({ imageState, onUpload, onProcessed, onOpenProject }) {
   const inputRef = useRef(null);
   const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState("");
+  const [recentProjects, setRecentProjects] = useState([]);
+
+  const refreshProjects = () => {
+    setRecentProjects(listSavedProjects());
+  };
+
+  useEffect(() => {
+    refreshProjects();
+  }, []);
 
   const uploadFile = (file) => {
     try {
@@ -57,6 +88,38 @@ export default function Homepage({ imageState, onUpload, onProcessed }) {
     if (file) {
       uploadFile(file);
     }
+  };
+
+  const openProject = (project) => {
+    onOpenProject?.(project);
+    navigate("/editor");
+  };
+
+  const renameProject = (project) => {
+    const nextName = window.prompt("Rename project", project.name || "Untitled Project");
+
+    if (!nextName?.trim()) {
+      return;
+    }
+
+    renameSavedProject(project.id, nextName);
+    refreshProjects();
+  };
+
+  const duplicateProject = (project) => {
+    duplicateSavedProject(project.id);
+    refreshProjects();
+  };
+
+  const deleteProject = (project) => {
+    const confirmed = window.confirm(`Delete "${project.name || "Untitled Project"}"?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    deleteSavedProject(project.id);
+    refreshProjects();
   };
 
   return (
@@ -127,6 +190,91 @@ export default function Homepage({ imageState, onUpload, onProcessed }) {
             {error}
           </div>
         ) : null}
+
+        <section className="mt-10">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-blue-600">Recent Projects</p>
+              <h2 className="mt-2 text-2xl font-bold text-gray-900">Continue where you left off</h2>
+            </div>
+          </div>
+
+          {recentProjects.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {recentProjects.map((project) => (
+                <article key={project.id} className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => openProject(project)}
+                    className="block aspect-video w-full bg-gray-100"
+                    title={`Open ${project.name || "Untitled Project"}`}
+                  >
+                    {project.thumbnail ? (
+                      <img
+                        src={project.thumbnail}
+                        alt={project.name || "Project thumbnail"}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="grid h-full place-items-center text-sm text-gray-400">No preview</span>
+                    )}
+                  </button>
+
+                  <div className="space-y-3 p-4">
+                    <div>
+                      <h3 className="truncate text-sm font-bold text-gray-900">{project.name || "Untitled Project"}</h3>
+                      <p className="mt-1 text-xs text-gray-500">{formatEditedTime(project.updatedAt)}</p>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                      <Layers3 size={14} />
+                      <span>{getWorkspaceCount(project)} workspace{getWorkspaceCount(project) === 1 ? "" : "s"}</span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openProject(project)}
+                        className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-blue-600 px-2 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700"
+                      >
+                        <FolderOpen size={14} />
+                        Open
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => renameProject(project)}
+                        className="grid h-8 w-8 place-items-center rounded-md border border-gray-200 text-gray-600 transition hover:bg-gray-50"
+                        title="Rename"
+                      >
+                        <Edit3 size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => duplicateProject(project)}
+                        className="grid h-8 w-8 place-items-center rounded-md border border-gray-200 text-gray-600 transition hover:bg-gray-50"
+                        title="Duplicate"
+                      >
+                        <Copy size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteProject(project)}
+                        className="grid h-8 w-8 place-items-center rounded-md border border-gray-200 text-gray-600 transition hover:bg-red-50 hover:text-red-600"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-gray-300 bg-white px-6 py-8 text-sm text-gray-500">
+              Saved projects will appear here.
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );

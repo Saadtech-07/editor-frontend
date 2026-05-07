@@ -19,7 +19,9 @@ export default function WorkspaceManager({
     }
   };
 
-  const handleDeleteWorkspace = (workspaceId) => {
+  const handleDeleteWorkspace = (event, workspaceId) => {
+    event.stopPropagation();
+
     if (workspaces.length > 1) {
       onDeleteWorkspace(workspaceId);
     }
@@ -48,11 +50,13 @@ export default function WorkspaceManager({
               )}
             </button>
             
-            {/* Delete Button for Non-Active Workspaces */}
-            {workspace.id !== activeWorkspaceId && workspaces.length > 1 && (
+            {/* Delete Button */}
+            {workspaces.length > 1 && (
               <button
-                onClick={() => handleDeleteWorkspace(workspace.id)}
-                className="absolute -top-2 -right-2 p-1 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                onClick={(event) => handleDeleteWorkspace(event, workspace.id)}
+                className={`absolute -right-2 -top-2 rounded-full bg-red-500 p-1 text-white transition-opacity hover:bg-red-600 ${
+                  workspace.id === activeWorkspaceId ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
                 title="Delete Workspace"
               >
                 <Trash2 size={10} />

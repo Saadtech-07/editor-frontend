@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Undo, Redo, ZoomIn, ZoomOut, RotateCcw, Download, Save, Grid3x3, ArrowLeftRight } from "lucide-react";
+import { Archive, ArrowLeft, Undo, Redo, ZoomIn, ZoomOut, RotateCcw, Download, Save, Grid3x3, ArrowLeftRight } from "lucide-react";
 import ExportModal from "./ExportModal.jsx";
 
 export default function TopBar({
@@ -187,12 +187,17 @@ export default function TopBar({
         <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.06]">
           <button
             onClick={() => handleExportClick("workspace")}
-            className={`grid h-8 w-8 place-items-center text-slate-200 transition hover:bg-white/[0.12] hover:text-white ${
-              onExportAll ? "rounded-l-lg" : "rounded-lg"
-            }`}
+            className="grid h-8 w-8 place-items-center rounded-l-lg text-slate-200 transition hover:bg-white/[0.12] hover:text-white"
             title="Export Current Workspace"
           >
             <Download size={14} />
+          </button>
+          <button
+            onClick={() => onSaveProject?.()}
+            className="grid h-8 w-8 place-items-center border-l border-white/10 text-slate-200 transition hover:bg-white/[0.12] hover:text-white"
+            title="Save Project"
+          >
+            <Save size={16} />
           </button>
           {onExportAll && (
             <button
@@ -200,7 +205,7 @@ export default function TopBar({
               className="grid h-8 w-8 place-items-center rounded-r-lg border-l border-white/10 text-slate-200 transition hover:bg-white/[0.12] hover:text-white"
               title="Export All Workspaces as ZIP"
             >
-              <Save size={16} />
+              <Archive size={15} />
             </button>
           )}
         </div>

@@ -20,6 +20,7 @@ function revokeObjectUrl(url) {
 
 function ImageEditorRoutes() {
   const [imageState, setImageState] = useState(initialImageState);
+  const [projectToLoad, setProjectToLoad] = useState(null);
   const objectUrlsRef = useRef({ originalUrl: "", processedUrl: "" });
 
   const setOriginalImage = useCallback((file) => {
@@ -32,6 +33,7 @@ function ImageEditorRoutes() {
 
     const originalUrl = URL.createObjectURL(file);
     objectUrlsRef.current = { originalUrl, processedUrl: "" };
+    setProjectToLoad(null);
 
     setImageState({
       originalFile: file,
@@ -39,6 +41,15 @@ function ImageEditorRoutes() {
       processedFile: null,
       processedUrl: "",
     });
+  }, []);
+
+  const openProject = useCallback((project) => {
+    revokeObjectUrl(objectUrlsRef.current.originalUrl);
+    revokeObjectUrl(objectUrlsRef.current.processedUrl);
+
+    objectUrlsRef.current = { originalUrl: "", processedUrl: "" };
+    setImageState(initialImageState);
+    setProjectToLoad(project);
   }, []);
 
   const setProcessedImage = useCallback((blob) => {
@@ -83,10 +94,19 @@ function ImageEditorRoutes() {
               imageState={imageState}
               onUpload={setOriginalImage}
               onProcessed={setProcessedImage}
+              onOpenProject={openProject}
             />
           }
         />
-        <Route path="/editor" element={<Editor imageUrl={imageState.processedUrl || imageState.originalUrl} />} />
+        <Route
+          path="/editor"
+          element={
+            <Editor
+              imageUrl={imageState.processedUrl || imageState.originalUrl}
+              projectToLoad={projectToLoad}
+            />
+          }
+        />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </EditorProvider>

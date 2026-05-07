@@ -26,6 +26,7 @@ import EraserTool from "../tools/EraserTool.js";
 
 
 import { ensureFabricEraserSupport, hasFabricEraserSupport } from "../utils/fabricEraserSupport.js";
+import { saveProjectRecord } from "../utils/projectStorage.js";
 
 import {
   exportAllWorkspaceImages,
@@ -253,7 +254,100 @@ function createHistoryEntry(targetCanvas) {
   };
 }
 
-export default function Editor({ imageUrl }) {
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function imageSourceToDataUrl(source) {
+  if (typeof source !== "string" || !source.startsWith("blob:")) {
+    return source;
+  }
+
+  try {
+    const response = await fetch(source);
+    const blob = await response.blob();
+    return await readBlobAsDataUrl(blob);
+  } catch (error) {
+    console.warn("Unable to convert blob image source for project save:", error);
+    return source;
+  }
+}
+
+async function inlineCanvasJsonImageSources(jsonObject) {
+  if (!jsonObject || typeof jsonObject !== "object") {
+    return jsonObject;
+  }
+
+  if (jsonObject.type === "image" && typeof jsonObject.src === "string") {
+    jsonObject.src = await imageSourceToDataUrl(jsonObject.src);
+  }
+
+  if (jsonObject.clipPath) {
+    await inlineCanvasJsonImageSources(jsonObject.clipPath);
+  }
+
+  if (jsonObject.eraser) {
+    await inlineCanvasJsonImageSources(jsonObject.eraser);
+  }
+
+  if (Array.isArray(jsonObject.objects)) {
+    for (const childObject of jsonObject.objects) {
+      await inlineCanvasJsonImageSources(childObject);
+    }
+  }
+
+  if (jsonObject.backgroundImage) {
+    await inlineCanvasJsonImageSources(jsonObject.backgroundImage);
+  }
+
+  if (jsonObject.overlayImage) {
+    await inlineCanvasJsonImageSources(jsonObject.overlayImage);
+  }
+
+  return jsonObject;
+}
+
+async function createProjectCanvasJSON(targetCanvas) {
+  const historyEntry = createHistoryEntry(targetCanvas);
+  return inlineCanvasJsonImageSources(structuredClone(historyEntry.canvasJSON));
+}
+
+async function prepareWorkspaceCanvasJSON(canvasJSON) {
+  if (!canvasJSON) {
+    return null;
+  }
+
+  return inlineCanvasJsonImageSources(structuredClone(canvasJSON));
+}
+
+function getCanvasJSONSize(canvasJSON) {
+  return {
+    width: Number.isFinite(canvasJSON?.width) ? canvasJSON.width : INITIAL_CANVAS_WIDTH,
+    height: Number.isFinite(canvasJSON?.height) ? canvasJSON.height : INITIAL_CANVAS_HEIGHT,
+  };
+}
+
+function getWorkspaceObjectCount(canvasJSON) {
+  return Array.isArray(canvasJSON?.objects)
+    ? canvasJSON.objects.filter((object) => !object.excludeFromLayer).length
+    : 0;
+}
+
+function createClientProjectId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  return `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export default function Editor({ imageUrl, projectToLoad = null }) {
 
   const canvasElementRef = useRef(null);
 
@@ -283,11 +377,15 @@ export default function Editor({ imageUrl }) {
 
   const baseImageInitializedRef = useRef(false);
 
+  const currentProjectIdRef = useRef(projectToLoad?.id || null);
+
+  const currentProjectNameRef = useRef(projectToLoad?.name || "Untitled Project");
+
   // Background removal toggle state
   const [originalImageData, setOriginalImageData] = useState(null);
   const [showOriginal, setShowOriginal] = useState(false);
 
-  useFabric(canvasElementRef, imageUrl);
+  useFabric(canvasElementRef, imageUrl, { skipInitialImageLoad: Boolean(projectToLoad) });
 
 
 
@@ -342,6 +440,8 @@ export default function Editor({ imageUrl }) {
   const [history, setHistory] = useState([]);
 
   const [historyIndex, setHistoryIndex] = useState(-1);
+
+  const [saveToast, setSaveToast] = useState("");
 
 
 
@@ -413,6 +513,10 @@ export default function Editor({ imageUrl }) {
 
     baseImageInitializedRef.current = false;
 
+    currentProjectIdRef.current = projectToLoad?.id || null;
+
+    currentProjectNameRef.current = projectToLoad?.name || "Untitled Project";
+
     setToolMessage("");
 
     setActiveTool("select");
@@ -439,7 +543,7 @@ export default function Editor({ imageUrl }) {
 
     setActiveWorkspaceId("page-1");
 
-  }, [imageUrl]);
+  }, [imageUrl, projectToLoad?.id]);
 
 
 
@@ -790,6 +894,199 @@ export default function Editor({ imageUrl }) {
     };
 
   }, [activeWorkspaceId, canvas, loadWorkspaceToCanvas, refreshSelectionOutline, setActiveObject, setSelectedLayerIds, syncObjects, workspaces]);
+
+
+  useEffect(() => {
+
+    if (!canvas || !projectToLoad?.workspaces?.length) {
+
+      return undefined;
+
+    }
+
+    let isCurrentRestore = true;
+
+    const restoreProject = async () => {
+
+      if (pendingHistorySaveRef.current) {
+
+        window.clearTimeout(pendingHistorySaveRef.current);
+
+        pendingHistorySaveRef.current = null;
+
+        pendingHistoryCanvasRef.current = null;
+
+      }
+
+      isRestoringHistoryRef.current = true;
+      currentProjectIdRef.current = projectToLoad.id || null;
+      currentProjectNameRef.current = projectToLoad.name || "Untitled Project";
+      baseImageInitializedRef.current = true;
+
+      const restoredWorkspaces = projectToLoad.workspaces.map((workspace, index) => {
+        const restoredHistory = Array.isArray(workspace.history)
+          ? workspace.history.map(normalizeHistoryEntry).filter(Boolean)
+          : [];
+        const restoredRedoHistory = Array.isArray(workspace.redoHistory)
+          ? workspace.redoHistory.map(normalizeHistoryEntry).filter(Boolean)
+          : [];
+        const restoredHistoryIndex = Number.isFinite(workspace.historyIndex)
+          ? Math.min(workspace.historyIndex, restoredHistory.length - 1)
+          : restoredHistory.length - 1;
+
+        return {
+          id: workspace.id || `page-${index + 1}`,
+          name: workspace.name || (index === 0 ? "Main" : `Workspace ${index + 1}`),
+          canvasJSON: workspace.canvasJSON || null,
+          history: restoredHistory,
+          historyIndex: restoredHistoryIndex,
+          redoHistory: restoredRedoHistory,
+          editorState: workspace.editorState || null,
+          createdAt: workspace.createdAt || null,
+          updatedAt: workspace.updatedAt || null,
+        };
+      });
+      const activeId = restoredWorkspaces.some((workspace) => workspace.id === projectToLoad.activeWorkspaceId)
+        ? projectToLoad.activeWorkspaceId
+        : restoredWorkspaces[0].id;
+      const activeWorkspace = restoredWorkspaces.find((workspace) => workspace.id === activeId) || restoredWorkspaces[0];
+
+      previousWorkspaceIdRef.current = activeId;
+      setWorkspaces(restoredWorkspaces);
+      setActiveWorkspaceId(activeId);
+      setActiveTool("select");
+      setToolMessage("");
+      toolManagerRef.current?.setActiveTool("select");
+      setActiveObject(null);
+      setSelectedLayerIds([]);
+
+      await loadWorkspaceToCanvas(canvas, activeWorkspace);
+
+      if (!isCurrentRestore) {
+
+        return;
+
+      }
+
+      const activeWorkspaceEditorState = activeWorkspace.editorState || projectToLoad.editorState || {};
+      const viewportTransform =
+        activeWorkspaceEditorState.viewportTransform ||
+        activeWorkspace.canvasJSON?.viewportTransform;
+
+      if (Array.isArray(viewportTransform)) {
+
+        canvas.setViewportTransform([...viewportTransform]);
+
+      }
+
+      if (Number.isFinite(activeWorkspaceEditorState.zoom)) {
+
+        setZoom(activeWorkspaceEditorState.zoom);
+
+      } else {
+
+        setZoom(canvas.getZoom());
+
+      }
+
+      canvas.discardActiveObject();
+      const restoredObjects = canvas.getObjects();
+
+      restoredObjects.forEach((object) => {
+
+        if (!object.excludeFromLayer) {
+
+          object.set({
+            selectable: true,
+            evented: true,
+          });
+
+        }
+
+        object.setCoords();
+
+      });
+
+      const activeObjectIds = Array.isArray(activeWorkspaceEditorState.activeObjectIds)
+        ? activeWorkspaceEditorState.activeObjectIds
+        : [];
+      const selectedObjects = activeObjectIds
+        .map((objectId) => restoredObjects.find((object) => object.editorId === objectId))
+        .filter(Boolean);
+      let restoredActiveObject = null;
+
+      if (selectedObjects.length > 1) {
+
+        restoredActiveObject = new fabric.ActiveSelection(selectedObjects, {
+          canvas,
+        });
+        canvas.setActiveObject(restoredActiveObject);
+
+      } else if (selectedObjects.length === 1) {
+
+        restoredActiveObject = selectedObjects[0];
+        canvas.setActiveObject(restoredActiveObject);
+
+      }
+
+      baseImageIdRef.current = canvas.getObjects().find((object) => object.isBaseImage)?.editorId || null;
+      setActiveObject(restoredActiveObject);
+      setSelectedLayerIds(selectedObjects.map((object) => object.editorId).filter(Boolean));
+      refreshSelectionOutline(restoredActiveObject);
+      syncObjects(canvas);
+      canvas.requestRenderAll();
+
+      const initialEntry = createHistoryEntry(canvas);
+      const activeSavedHistory = activeWorkspace.history || [];
+      const activeSavedHistoryIndex = Number.isFinite(activeWorkspace.historyIndex)
+        ? Math.min(activeWorkspace.historyIndex, activeSavedHistory.length - 1)
+        : activeSavedHistory.length - 1;
+      const nextHistory =
+        activeSavedHistory.length > 0 && activeSavedHistoryIndex >= 0
+          ? activeSavedHistory.slice(0, activeSavedHistoryIndex + 1)
+          : [initialEntry];
+      const nextRedoHistory = Array.isArray(activeWorkspace.redoHistory) ? activeWorkspace.redoHistory : [];
+      const nextHistoryIndex = nextHistory.length - 1;
+
+      historyRef.current = nextHistory;
+      redoHistoryRef.current = nextRedoHistory;
+      historyIndexRef.current = nextHistoryIndex;
+      lastHistorySignatureRef.current = getHistorySignature(nextHistory[nextHistory.length - 1]);
+      setHistory(nextHistory);
+      setHistoryIndex(nextHistoryIndex);
+
+      setWorkspaces((currentWorkspaces) =>
+        currentWorkspaces.map((workspace) =>
+          workspace.id === activeId
+            ? {
+                ...workspace,
+                canvasJSON: initialEntry.canvasJSON,
+                history: nextHistory,
+                historyIndex: nextHistoryIndex,
+                redoHistory: nextRedoHistory,
+              }
+            : workspace,
+        ),
+      );
+
+      isRestoringHistoryRef.current = false;
+    };
+
+    void restoreProject().catch((error) => {
+
+      console.error("Unable to restore saved project:", error);
+
+      isRestoringHistoryRef.current = false;
+
+    });
+
+    return () => {
+
+      isCurrentRestore = false;
+
+    };
+
+  }, [canvas, loadWorkspaceToCanvas, projectToLoad, refreshSelectionOutline, setActiveObject, setActiveWorkspaceId, setSelectedLayerIds, setWorkspaces, syncObjects]);
 
 
 
@@ -3046,7 +3343,7 @@ export default function Editor({ imageUrl }) {
       return;
     }
 
-    const currentEntry = historyRef.current[historyRef.current.length - 1];
+    const currentEntry = historyRef.current[historyRef.current.length - 1] || createHistoryEntry(canvas);
     const nextUndoHistory = historyRef.current.slice(0, -1);
     const nextRedoHistory = [currentEntry, ...redoHistoryRef.current].slice(0, HISTORY_LIMIT);
     const previousEntry = nextUndoHistory[nextUndoHistory.length - 1];
@@ -3097,17 +3394,19 @@ export default function Editor({ imageUrl }) {
 
     flushPendingHistorySave();
 
-    const currentEntry = historyRef.current[historyRef.current.length - 1];
+    const currentEntry = historyRef.current[historyRef.current.length - 1] || createHistoryEntry(canvas);
+    const nextHistory = historyRef.current.length ? historyRef.current : [currentEntry];
+    const nextHistoryIndex = historyRef.current.length ? historyIndexRef.current : 0;
 
 
 
     saveWorkspace(activeWorkspaceId, {
 
-      canvasJSON: currentEntry?.canvasJSON || canvas.toJSON(FABRIC_SERIALIZATION_PROPS),
+      canvasJSON: currentEntry.canvasJSON,
 
-      history: historyRef.current,
+      history: nextHistory,
 
-      historyIndex: historyIndexRef.current,
+      historyIndex: nextHistoryIndex,
 
       redoHistory: redoHistoryRef.current,
 
@@ -3123,11 +3422,11 @@ export default function Editor({ imageUrl }) {
 
       saveActiveWorkspaceState();
 
-      switchWorkspace(workspaceId, canvas);
+      switchWorkspace(workspaceId, null);
 
     },
 
-    [canvas, saveActiveWorkspaceState, switchWorkspace],
+    [saveActiveWorkspaceState, switchWorkspace],
 
   );
 
@@ -3139,11 +3438,11 @@ export default function Editor({ imageUrl }) {
 
       saveActiveWorkspaceState();
 
-      createWorkspaceFromCurrentCanvas(canvas, name?.trim() || "New");
+      createWorkspaceFromCurrentCanvas(null, name?.trim() || "New");
 
     },
 
-    [canvas, createWorkspaceFromCurrentCanvas, saveActiveWorkspaceState],
+    [createWorkspaceFromCurrentCanvas, saveActiveWorkspaceState],
 
   );
 
@@ -3161,13 +3460,19 @@ export default function Editor({ imageUrl }) {
 
 
 
+      const workspaceIndex = workspaces.findIndex((workspace) => workspace.id === workspaceId);
+
       const remainingWorkspaces = workspaces.filter((workspace) => workspace.id !== workspaceId);
+
+      const previousWorkspace = workspaceIndex > 0 ? workspaces[workspaceIndex - 1] : null;
+
+      const nextWorkspace = workspaceIndex >= 0 ? workspaces[workspaceIndex + 1] : null;
 
       const nextActiveId =
 
         workspaceId === activeWorkspaceId
 
-          ? remainingWorkspaces[0]?.id
+          ? previousWorkspace?.id || nextWorkspace?.id || remainingWorkspaces[0]?.id
 
           : activeWorkspaceId;
 
@@ -3515,47 +3820,187 @@ export default function Editor({ imageUrl }) {
 
 
 
-  const saveProject = useCallback(() => {
+  const saveProject = useCallback(async ({ silent = false } = {}) => {
 
     if (!canvas) {
 
-      return;
+      return null;
 
     }
 
 
 
-    const projectData = {
+    flushPendingHistorySave();
 
-      version: "1.0",
+    if (!currentProjectIdRef.current) {
 
-      canvas: canvas.toJSON(FABRIC_SERIALIZATION_PROPS),
+      currentProjectIdRef.current = createClientProjectId();
 
-      timestamp: new Date().toISOString(),
+    }
+
+    const hasProjectContent =
+      canvas.getObjects().some((object) => !object.excludeFromLayer) ||
+      workspaces.some((workspace) => workspace.canvasJSON?.objects?.length);
+
+    if (silent && !hasProjectContent) {
+
+      return null;
+
+    }
+
+    try {
+
+      const currentCanvasJSON = await createProjectCanvasJSON(canvas);
+      const activeObjectIds = getCanvasActiveObjectIds(canvas);
+      const activeViewportTransform = Array.isArray(canvas.viewportTransform)
+        ? [...canvas.viewportTransform]
+        : [1, 0, 0, 1, 0, 0];
+      const sourceWorkspaces = workspaces.length
+        ? workspaces
+        : [
+            {
+              id: activeWorkspaceId || "page-1",
+              name: "Main",
+              canvasJSON: currentCanvasJSON,
+            },
+          ];
+      const preparedWorkspaces = [];
+
+      for (const workspace of sourceWorkspaces) {
+
+        const isActiveWorkspace = workspace.id === activeWorkspaceId;
+        const canvasJSON =
+          isActiveWorkspace
+            ? currentCanvasJSON
+            : await prepareWorkspaceCanvasJSON(workspace.canvasJSON);
+        const canvasSize = getCanvasJSONSize(canvasJSON);
+        const workspaceEditorState = isActiveWorkspace
+          ? {
+              zoom,
+              activeObjectIds,
+              viewportTransform: activeViewportTransform,
+              canvasWidth: canvas.getWidth(),
+              canvasHeight: canvas.getHeight(),
+              objectCount: getWorkspaceObjectCount(canvasJSON),
+            }
+          : {
+              ...(workspace.editorState || {}),
+              canvasWidth: canvasSize.width,
+              canvasHeight: canvasSize.height,
+              viewportTransform:
+                workspace.editorState?.viewportTransform ||
+                (Array.isArray(canvasJSON?.viewportTransform) ? [...canvasJSON.viewportTransform] : null),
+              objectCount: getWorkspaceObjectCount(canvasJSON),
+            };
+
+        preparedWorkspaces.push({
+          id: workspace.id,
+          name: workspace.name || "Workspace",
+          canvasJSON,
+          editorState: workspaceEditorState,
+          createdAt: workspace.createdAt || null,
+          updatedAt: new Date().toISOString(),
+        });
+
+      }
+
+      let thumbnail = "";
+
+      try {
+
+        thumbnail = canvas.toDataURL({
+          format: "jpeg",
+          quality: 0.6,
+          multiplier: 0.3,
+          enableRetinaScaling: false,
+        });
+
+      } catch (thumbnailError) {
+
+        console.warn("Unable to generate project thumbnail:", thumbnailError);
+
+      }
+
+      const savedProject = saveProjectRecord({
+        id: currentProjectIdRef.current,
+        name: currentProjectNameRef.current,
+        thumbnail,
+        activeWorkspaceId,
+        workspaces: preparedWorkspaces,
+        editorState: {
+          zoom,
+          activeObjectIds,
+          viewportTransform: activeViewportTransform,
+          canvasWidth: canvas.getWidth(),
+          canvasHeight: canvas.getHeight(),
+          workspaceCount: preparedWorkspaces.length,
+        },
+        metadata: {
+          workspaceCount: preparedWorkspaces.length,
+        },
+      });
+
+      currentProjectIdRef.current = savedProject.id;
+      currentProjectNameRef.current = savedProject.name;
+
+      if (!silent) {
+
+        setSaveToast("Project Saved");
+
+        window.setTimeout(() => {
+
+          setSaveToast("");
+
+        }, 1800);
+
+      }
+
+      return savedProject;
+
+    } catch (error) {
+
+      console.error("Unable to save project:", error);
+
+      if (!silent) {
+
+        setSaveToast("Project Save Failed");
+
+        window.setTimeout(() => {
+
+          setSaveToast("");
+
+        }, 2200);
+
+      }
+
+      return null;
+
+    }
+
+  }, [activeWorkspaceId, canvas, flushPendingHistorySave, workspaces, zoom]);
+
+
+  useEffect(() => {
+
+    if (!canvas) {
+
+      return undefined;
+
+    }
+
+    const autoSaveTimer = window.setInterval(() => {
+
+      void saveProject({ silent: true });
+
+    }, 15000);
+
+    return () => {
+
+      window.clearInterval(autoSaveTimer);
 
     };
 
-
-
-    const blob = new Blob([JSON.stringify(projectData, null, 2)], {
-
-      type: "application/json",
-
-    });
-
-    const url = URL.createObjectURL(blob);
-
-    const link = document.createElement("a");
-
-    link.href = url;
-
-    link.download = `pixelforge-project-${Date.now()}.json`;
-
-    link.click();
-
-    URL.revokeObjectURL(url);
-
-  }, [canvas]);
+  }, [canvas, saveProject]);
 
 
 
@@ -4111,6 +4556,12 @@ export default function Editor({ imageUrl }) {
         onToggleBackground={handleToggleBackground}
 
       />
+
+      {saveToast ? (
+        <div className="fixed right-5 top-24 z-[60] rounded-lg border border-teal-300/40 bg-slate-900 px-4 py-2 text-sm font-semibold text-teal-100 shadow-xl shadow-black/30">
+          {saveToast}
+        </div>
+      ) : null}
 
 
 
