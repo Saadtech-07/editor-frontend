@@ -4,6 +4,10 @@ import { Eye, EyeOff, Layers3, Trash2, Sliders, Move, RotateCw, Sun, Moon, Type,
 import { useEditor } from "../../context/EditorContext.jsx";
 import { removeObjectFromCanvas } from "../../utils/fabricHelpers.js";
 
+function markHistoryChanged(canvas) {
+  canvas?.fire("history:changed");
+}
+
 function PropertyControls({ activeObject, canvas, syncObjects }) {
   const [opacity, setOpacity] = useState(activeObject?.opacity || 1);
   const [brightness, setBrightness] = useState(0);
@@ -24,6 +28,7 @@ function PropertyControls({ activeObject, canvas, syncObjects }) {
     activeObject.set(property, value);
     canvas.requestRenderAll();
     syncObjects(canvas);
+    markHistoryChanged(canvas);
   };
 
   const updateFilter = (filterType, value) => {
@@ -60,6 +65,7 @@ function PropertyControls({ activeObject, canvas, syncObjects }) {
     activeObject.applyFilters();
     canvas.requestRenderAll();
     syncObjects(canvas);
+    markHistoryChanged(canvas);
   };
 
   // Text properties
@@ -293,6 +299,7 @@ export default function RightPanel({ className = "" }) {
     layer.fabricObject.set({ visible: !layer.visible });
     canvas?.requestRenderAll();
     syncObjects(canvas);
+    markHistoryChanged(canvas);
   };
 
   const deleteLayer = (event, layer) => {
@@ -301,6 +308,7 @@ export default function RightPanel({ className = "" }) {
     setActiveObject(null);
     canvas?.requestRenderAll();
     syncObjects(canvas);
+    markHistoryChanged(canvas);
   };
 
   const handleLayerClick = (event, layer) => {
@@ -367,6 +375,7 @@ export default function RightPanel({ className = "" }) {
                         canvas.setActiveObject(group);
                         canvas.requestRenderAll();
                         syncObjects(canvas);
+                        markHistoryChanged(canvas);
                         setSelectedLayerIds([]);
                       }
                     }}
@@ -392,6 +401,7 @@ export default function RightPanel({ className = "" }) {
 
                         canvas.requestRenderAll();
                         syncObjects(canvas);
+                        markHistoryChanged(canvas);
                         setSelectedLayerIds([]);
                       }
                     }}

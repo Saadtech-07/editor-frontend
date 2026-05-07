@@ -12,13 +12,11 @@ export default function TopBar({
   onResetCanvas,
   onExport,
   onExportAll,
-  onExportSelected,
   onSaveProject,
   zoom = 1,
   hasBackgroundRemoval = false,
   showOriginal = false,
   onToggleBackground = null,
-  activeObject = null,
 }) {
   const [showGrid, setShowGrid] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
@@ -26,20 +24,11 @@ export default function TopBar({
   const [isExporting, setIsExporting] = useState(false);
 
   const exportSourceSize = useMemo(() => {
-    if (exportType === "object" && activeObject?.getBoundingRect) {
-      const bounds = activeObject.getBoundingRect(true, true);
-
-      return {
-        width: Math.max(1, Math.ceil(bounds.width || 1)),
-        height: Math.max(1, Math.ceil(bounds.height || 1)),
-      };
-    }
-
     return {
       width: Math.max(1, Math.ceil(canvas?.getWidth?.() || 1)),
       height: Math.max(1, Math.ceil(canvas?.getHeight?.() || 1)),
     };
-  }, [activeObject, canvas, exportType]);
+  }, [canvas]);
 
   const toggleGrid = useCallback(() => {
     if (!canvas) return;
@@ -89,8 +78,6 @@ export default function TopBar({
       try {
         if (exportType === "workspace") {
           await onExport?.(options);
-        } else if (exportType === "object") {
-          await onExportSelected?.(options);
         } else if (exportType === "all") {
           await onExportAll?.(options);
         }
@@ -101,7 +88,7 @@ export default function TopBar({
         setIsExporting(false);
       }
     },
-    [exportType, onExport, onExportSelected, onExportAll, handleExportModalClose]
+    [exportType, onExport, onExportAll, handleExportModalClose]
   );
 
   return (
@@ -198,15 +185,15 @@ export default function TopBar({
         </div>
 
         <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.06]">
-          {activeObject && onExportSelected && (
-            <button
-              onClick={() => handleExportClick("object")}
-              className="grid h-8 w-8 place-items-center rounded-l-lg text-slate-200 transition hover:bg-white/[0.12] hover:text-white"
-              title="Export Selected Object"
-            >
-              <Download size={14} />
-            </button>
-          )}
+          <button
+            onClick={() => handleExportClick("workspace")}
+            className={`grid h-8 w-8 place-items-center text-slate-200 transition hover:bg-white/[0.12] hover:text-white ${
+              onExportAll ? "rounded-l-lg" : "rounded-lg"
+            }`}
+            title="Export Current Workspace"
+          >
+            <Download size={14} />
+          </button>
           {onExportAll && (
             <button
               onClick={() => handleExportClick("all")}

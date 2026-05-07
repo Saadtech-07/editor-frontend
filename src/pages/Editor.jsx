@@ -29,7 +29,6 @@ import { ensureFabricEraserSupport, hasFabricEraserSupport } from "../utils/fabr
 
 import {
   exportAllWorkspaceImages,
-  exportSingleObject,
   exportWorkspaceImage,
 } from "../utils/exportUtils.js";
 
@@ -93,10 +92,166 @@ const INITIAL_CANVAS_WIDTH = 980;
 
 const INITIAL_CANVAS_HEIGHT = 660;
 
+const HISTORY_LIMIT = 80;
 
+const HISTORY_SAVE_DEBOUNCE_MS = 160;
 
+function normalizeHistoryEntry(entry) {
+  if (!entry) {
+    return null;
+  }
 
+  if (typeof entry === "string") {
+    try {
+      return {
+        canvasJSON: JSON.parse(entry),
+        activeObjectIds: [],
+        viewportTransform: null,
+        zoom: 1,
+      };
+    } catch (error) {
+      console.warn("Unable to parse legacy history entry:", error);
+      return null;
+    }
+  }
 
+  if (entry.canvasJSON) {
+    return {
+      ...entry,
+      activeObjectIds: Array.isArray(entry.activeObjectIds) ? entry.activeObjectIds : [],
+      viewportTransform: Array.isArray(entry.viewportTransform) ? entry.viewportTransform : null,
+      zoom: Number.isFinite(entry.zoom) ? entry.zoom : 1,
+    };
+  }
+
+  if (entry.objects || entry.background || entry.backgroundColor || entry.backgroundImage) {
+    return {
+      canvasJSON: entry,
+      activeObjectIds: [],
+      viewportTransform: Array.isArray(entry.viewportTransform) ? entry.viewportTransform : null,
+      zoom: Number.isFinite(entry.zoom) ? entry.zoom : 1,
+    };
+  }
+
+  return null;
+}
+
+function getHistorySignature(entry) {
+  if (!entry) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify({
+      canvasJSON: entry.canvasJSON,
+      activeObjectIds: entry.activeObjectIds || [],
+    });
+  } catch (error) {
+    console.warn("Unable to create history signature:", error);
+    return `${Date.now()}`;
+  }
+}
+
+function getCanvasActiveObjectIds(targetCanvas) {
+  const activeObject = targetCanvas?.getActiveObject?.();
+
+  if (!activeObject) {
+    return [];
+  }
+
+  if (activeObject.type === "activeSelection" && typeof activeObject.getObjects === "function") {
+    return activeObject
+      .getObjects()
+      .map((object) => object.editorId)
+      .filter(Boolean);
+  }
+
+  return activeObject.editorId ? [activeObject.editorId] : [];
+}
+
+function getImageElementDataUrl(fabricObject) {
+  const imageElement = fabricObject?._element || fabricObject?._originalElement || fabricObject?.getElement?.();
+
+  if (!imageElement) {
+    return null;
+  }
+
+  const width = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width;
+  const height = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height;
+
+  if (!width || !height) {
+    return null;
+  }
+
+  try {
+    const imageCanvas = document.createElement("canvas");
+    imageCanvas.width = width;
+    imageCanvas.height = height;
+    imageCanvas.getContext("2d")?.drawImage(imageElement, 0, 0, width, height);
+    return imageCanvas.toDataURL("image/png");
+  } catch (error) {
+    console.warn("Unable to inline Fabric image source for history:", error);
+    return null;
+  }
+}
+
+function inlineHistoryImageSources(jsonObject, fabricObject) {
+  if (!jsonObject || !fabricObject) {
+    return;
+  }
+
+  if (jsonObject.type === "image") {
+    const source = jsonObject.src || fabricObject._element?.src || fabricObject.getSrc?.();
+
+    if (typeof source === "string" && source.startsWith("blob:")) {
+      const dataUrl = getImageElementDataUrl(fabricObject);
+
+      if (dataUrl) {
+        jsonObject.src = dataUrl;
+      }
+    }
+  }
+
+  if (jsonObject.clipPath && fabricObject.clipPath) {
+    inlineHistoryImageSources(jsonObject.clipPath, fabricObject.clipPath);
+  }
+
+  if (Array.isArray(jsonObject.objects) && Array.isArray(fabricObject._objects)) {
+    jsonObject.objects.forEach((childJsonObject, index) => {
+      inlineHistoryImageSources(childJsonObject, fabricObject._objects[index]);
+    });
+  }
+}
+
+function createHistoryEntry(targetCanvas) {
+  const canvasJSON = targetCanvas.toJSON(FABRIC_SERIALIZATION_PROPS);
+
+  canvasJSON.width = targetCanvas.getWidth();
+  canvasJSON.height = targetCanvas.getHeight();
+  canvasJSON.viewportTransform = Array.isArray(targetCanvas.viewportTransform)
+    ? [...targetCanvas.viewportTransform]
+    : [1, 0, 0, 1, 0, 0];
+
+  targetCanvas.getObjects().forEach((fabricObject, index) => {
+    inlineHistoryImageSources(canvasJSON.objects?.[index], fabricObject);
+  });
+
+  if (canvasJSON.backgroundImage && targetCanvas.backgroundImage) {
+    inlineHistoryImageSources(canvasJSON.backgroundImage, targetCanvas.backgroundImage);
+  }
+
+  if (canvasJSON.overlayImage && targetCanvas.overlayImage) {
+    inlineHistoryImageSources(canvasJSON.overlayImage, targetCanvas.overlayImage);
+  }
+
+  return {
+    canvasJSON,
+    activeObjectIds: getCanvasActiveObjectIds(targetCanvas),
+    viewportTransform: [...canvasJSON.viewportTransform],
+    zoom: typeof targetCanvas.getZoom === "function" ? targetCanvas.getZoom() : 1,
+    timestamp: Date.now(),
+  };
+}
 
 export default function Editor({ imageUrl }) {
 
@@ -108,9 +263,17 @@ export default function Editor({ imageUrl }) {
 
   const historyRef = useRef([]);
 
+  const redoHistoryRef = useRef([]);
+
   const historyIndexRef = useRef(-1);
 
   const isRestoringHistoryRef = useRef(false);
+
+  const pendingHistorySaveRef = useRef(null);
+
+  const pendingHistoryCanvasRef = useRef(null);
+
+  const lastHistorySignatureRef = useRef("");
 
   const previousWorkspaceIdRef = useRef("page-1");
 
@@ -228,7 +391,21 @@ export default function Editor({ imageUrl }) {
 
     historyRef.current = [];
 
+    redoHistoryRef.current = [];
+
     historyIndexRef.current = -1;
+
+    lastHistorySignatureRef.current = "";
+
+    if (pendingHistorySaveRef.current) {
+
+      window.clearTimeout(pendingHistorySaveRef.current);
+
+      pendingHistorySaveRef.current = null;
+
+      pendingHistoryCanvasRef.current = null;
+
+    }
 
     previousWorkspaceIdRef.current = "page-1";
 
@@ -254,6 +431,8 @@ export default function Editor({ imageUrl }) {
 
         historyIndex: -1,
 
+        redoHistory: [],
+
       },
 
     ]);
@@ -267,60 +446,110 @@ export default function Editor({ imageUrl }) {
 
 
 
-  const snapshotCanvas = useCallback(
+  const persistHistoryState = useCallback(
+    (targetCanvas, undoStack = historyRef.current, redoStack = redoHistoryRef.current) => {
+      const currentEntry = undoStack[undoStack.length - 1] || null;
+      const nextIndex = undoStack.length - 1;
 
-    (targetCanvas = canvas) => {
-
-      if (!targetCanvas || isRestoringHistoryRef.current) {
-
-        return;
-
-      }
-
-
-
-      const snapshot = JSON.stringify(targetCanvas.toJSON(FABRIC_SERIALIZATION_PROPS));
-
-      const nextHistoryBase = historyRef.current.slice(0, historyIndexRef.current + 1);
-
-
-
-      // Always add the snapshot to ensure each action is recorded
-
-      const nextHistory = [...nextHistoryBase, snapshot].slice(-50);
-
-      const nextIndex = nextHistory.length - 1;
-
-
-
-      historyRef.current = nextHistory;
-
+      historyRef.current = undoStack;
+      redoHistoryRef.current = redoStack;
       historyIndexRef.current = nextIndex;
 
-      setHistory(nextHistory);
-
+      setHistory(undoStack);
       setHistoryIndex(nextIndex);
 
-      if (activeWorkspaceId) {
-
+      if (activeWorkspaceId && currentEntry) {
         saveWorkspace(activeWorkspaceId, {
-
-          canvasJSON: targetCanvas.toJSON(FABRIC_SERIALIZATION_PROPS),
-
-          history: nextHistory,
-
+          canvasJSON: currentEntry.canvasJSON,
+          history: undoStack,
           historyIndex: nextIndex,
-
+          redoHistory: redoStack,
         });
+      }
+    },
+    [activeWorkspaceId, saveWorkspace],
+  );
 
+  const commitHistorySnapshot = useCallback(
+    (targetCanvas = canvas, options = {}) => {
+      if (!targetCanvas || isRestoringHistoryRef.current) {
+        return;
       }
 
+      const historyEntry = createHistoryEntry(targetCanvas);
+      const historySignature = getHistorySignature(historyEntry);
 
+      if (historySignature === lastHistorySignatureRef.current) {
+        return;
+      }
+
+      const nextHistoryBase = historyRef.current.slice(0, historyIndexRef.current + 1);
+      const nextHistory = [...nextHistoryBase, historyEntry].slice(-HISTORY_LIMIT);
+      const nextRedoHistory = options.clearRedo === false ? redoHistoryRef.current : [];
+
+      lastHistorySignatureRef.current = historySignature;
+      persistHistoryState(targetCanvas, nextHistory, nextRedoHistory);
     },
-
-    [activeWorkspaceId, canvas, saveWorkspace],
-
+    [canvas, persistHistoryState],
   );
+
+  const flushPendingHistorySave = useCallback(() => {
+    if (!pendingHistorySaveRef.current) {
+      return;
+    }
+
+    window.clearTimeout(pendingHistorySaveRef.current);
+    pendingHistorySaveRef.current = null;
+
+    const targetCanvas = pendingHistoryCanvasRef.current || canvas;
+    pendingHistoryCanvasRef.current = null;
+
+    commitHistorySnapshot(targetCanvas);
+  }, [canvas, commitHistorySnapshot]);
+
+  const snapshotCanvas = useCallback(
+    (targetCanvas = canvas, options = {}) => {
+      if (!targetCanvas || isRestoringHistoryRef.current) {
+        return;
+      }
+
+      if (options.immediate) {
+        if (pendingHistorySaveRef.current) {
+          window.clearTimeout(pendingHistorySaveRef.current);
+          pendingHistorySaveRef.current = null;
+          pendingHistoryCanvasRef.current = null;
+        }
+
+        commitHistorySnapshot(targetCanvas, options);
+        return;
+      }
+
+      pendingHistoryCanvasRef.current = targetCanvas;
+
+      if (pendingHistorySaveRef.current) {
+        window.clearTimeout(pendingHistorySaveRef.current);
+      }
+
+      pendingHistorySaveRef.current = window.setTimeout(() => {
+        pendingHistorySaveRef.current = null;
+
+        const pendingCanvas = pendingHistoryCanvasRef.current || targetCanvas;
+        pendingHistoryCanvasRef.current = null;
+        commitHistorySnapshot(pendingCanvas, options);
+      }, HISTORY_SAVE_DEBOUNCE_MS);
+    },
+    [canvas, commitHistorySnapshot],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (pendingHistorySaveRef.current) {
+        window.clearTimeout(pendingHistorySaveRef.current);
+        pendingHistorySaveRef.current = null;
+        pendingHistoryCanvasRef.current = null;
+      }
+    };
+  }, []);
 
 
 
@@ -492,17 +721,39 @@ export default function Editor({ imageUrl }) {
 
     setActiveObject(null);
 
+    setSelectedLayerIds([]);
 
+    if (pendingHistorySaveRef.current) {
 
-    const nextHistory = workspace.history || [];
+      window.clearTimeout(pendingHistorySaveRef.current);
 
-    const nextHistoryIndex = workspace.historyIndex ?? (nextHistory.length ? nextHistory.length - 1 : -1);
+      pendingHistorySaveRef.current = null;
+
+      pendingHistoryCanvasRef.current = null;
+
+    }
+
+    const storedHistory = (workspace.history || []).map(normalizeHistoryEntry).filter(Boolean);
+
+    const storedHistoryIndex = workspace.historyIndex ?? (storedHistory.length ? storedHistory.length - 1 : -1);
+
+    const nextHistory = storedHistoryIndex >= 0 ? storedHistory.slice(0, storedHistoryIndex + 1) : [];
+
+    const nextRedoHistory = Array.isArray(workspace.redoHistory)
+      ? workspace.redoHistory.map(normalizeHistoryEntry).filter(Boolean)
+      : storedHistory.slice(storedHistoryIndex + 1);
+
+    const nextHistoryIndex = nextHistory.length ? nextHistory.length - 1 : -1;
 
 
 
     historyRef.current = nextHistory;
 
+    redoHistoryRef.current = nextRedoHistory;
+
     historyIndexRef.current = nextHistoryIndex;
+
+    lastHistorySignatureRef.current = getHistorySignature(nextHistory[nextHistory.length - 1]);
 
     setHistory(nextHistory);
 
@@ -538,7 +789,7 @@ export default function Editor({ imageUrl }) {
 
     };
 
-  }, [activeWorkspaceId, canvas, loadWorkspaceToCanvas, refreshSelectionOutline, setActiveObject, syncObjects, workspaces]);
+  }, [activeWorkspaceId, canvas, loadWorkspaceToCanvas, refreshSelectionOutline, setActiveObject, setSelectedLayerIds, syncObjects, workspaces]);
 
 
 
@@ -1284,7 +1535,7 @@ export default function Editor({ imageUrl }) {
 
   useEffect(() => {
 
-    if (!canvas || objects.length === 0 || historyIndex !== -1) {
+    if (!canvas || objects.length === 0 || historyRef.current.length > 0) {
 
       return;
 
@@ -1292,9 +1543,9 @@ export default function Editor({ imageUrl }) {
 
 
 
-    snapshotCanvas(canvas);
+    snapshotCanvas(canvas, { immediate: true });
 
-  }, [canvas, historyIndex, objects.length, snapshotCanvas]);
+  }, [canvas, objects.length, snapshotCanvas]);
 
 
 
@@ -1588,11 +1839,69 @@ export default function Editor({ imageUrl }) {
 
 
 
-    const handleObjectModified = () => {
+    const shouldIgnoreHistoryEventTarget = (target) =>
+      isRestoringHistoryRef.current ||
+      !target ||
+      target.excludeFromLayer ||
+      target.excludeFromExport ||
+      target.type === "path" ||
+      target.type === "activeSelection";
+
+    const handleObjectModified = (event) => {
+
+      if (shouldIgnoreHistoryEventTarget(event?.target)) {
+
+        return;
+
+      }
 
       const activeObject = canvas.getActiveObject();
 
       refreshSelectionOutline(activeObject);
+
+      syncObjects(canvas);
+
+      snapshotCanvas(canvas);
+
+    };
+
+    const handleObjectCollectionChanged = (event) => {
+
+      if (shouldIgnoreHistoryEventTarget(event?.target)) {
+
+        return;
+
+      }
+
+      syncObjects(canvas);
+
+      snapshotCanvas(canvas);
+
+    };
+
+    const handleTextChanged = (event) => {
+
+      if (shouldIgnoreHistoryEventTarget(event?.target)) {
+
+        return;
+
+      }
+
+      syncObjects(canvas);
+
+      snapshotCanvas(canvas);
+
+    };
+
+    const handleExplicitHistoryChange = () => {
+
+      if (isRestoringHistoryRef.current) {
+
+        return;
+
+      }
+
+      syncObjects(canvas);
 
       snapshotCanvas(canvas);
 
@@ -1600,7 +1909,15 @@ export default function Editor({ imageUrl }) {
 
 
 
-      canvas.on("object:modified", handleObjectModified);
+    canvas.on("object:modified", handleObjectModified);
+
+    canvas.on("object:added", handleObjectCollectionChanged);
+
+    canvas.on("object:removed", handleObjectCollectionChanged);
+
+    canvas.on("text:changed", handleTextChanged);
+
+    canvas.on("history:changed", handleExplicitHistoryChange);
 
 
 
@@ -1608,9 +1925,17 @@ export default function Editor({ imageUrl }) {
 
       canvas.off("object:modified", handleObjectModified);
 
+      canvas.off("object:added", handleObjectCollectionChanged);
+
+      canvas.off("object:removed", handleObjectCollectionChanged);
+
+      canvas.off("text:changed", handleTextChanged);
+
+      canvas.off("history:changed", handleExplicitHistoryChange);
+
     };
 
-  }, [canvas, snapshotCanvas, refreshSelectionOutline]);
+  }, [canvas, snapshotCanvas, refreshSelectionOutline, syncObjects]);
 
 
 
@@ -2644,85 +2969,121 @@ export default function Editor({ imageUrl }) {
 
 
 
-  const loadHistoryState = useCallback(
+  const restoreHistoryEntry = useCallback(
+    (historyEntry, undoStack = historyRef.current, redoStack = redoHistoryRef.current) => {
+      const normalizedEntry = normalizeHistoryEntry(historyEntry);
 
-    (nextIndex) => {
-
-      if (!canvas || nextIndex < 0 || nextIndex >= historyRef.current.length) {
-
+      if (!canvas || !normalizedEntry || isRestoringHistoryRef.current) {
         return;
-
       }
 
-
-
       isRestoringHistoryRef.current = true;
+      canvas.discardActiveObject();
+      canvas.clear();
 
-      historyIndexRef.current = nextIndex;
+      canvas.loadFromJSON(normalizedEntry.canvasJSON, () => {
+        const restoredObjects = canvas.getObjects();
 
-      setHistoryIndex(nextIndex);
+        restoredObjects.forEach((object) => {
+          if (!object.excludeFromLayer) {
+            object.set({
+              selectable: true,
+              evented: true,
+            });
+          }
 
+          object.setCoords();
+        });
 
+        const selectedIds = Array.isArray(normalizedEntry.activeObjectIds)
+          ? normalizedEntry.activeObjectIds
+          : [];
+        const selectedObjects = selectedIds
+          .map((objectId) => restoredObjects.find((object) => object.editorId === objectId))
+          .filter(Boolean);
 
-      canvas.loadFromJSON(historyRef.current[nextIndex], () => {
+        let restoredActiveObject = null;
 
-        canvas.discardActiveObject();
-
-        setActiveObject(null);
-
-        refreshSelectionOutline(null);
-
-        canvas.requestRenderAll();
-
-        syncObjects(canvas);
-
-        if (activeWorkspaceId) {
-
-          saveWorkspace(activeWorkspaceId, {
-
-            canvasJSON: JSON.parse(historyRef.current[nextIndex]),
-
-            history: historyRef.current,
-
-            historyIndex: nextIndex,
-
+        if (selectedObjects.length > 1) {
+          restoredActiveObject = new fabric.ActiveSelection(selectedObjects, {
+            canvas,
           });
-
+          canvas.setActiveObject(restoredActiveObject);
+        } else if (selectedObjects.length === 1) {
+          restoredActiveObject = selectedObjects[0];
+          canvas.setActiveObject(restoredActiveObject);
         }
 
+        if (Array.isArray(normalizedEntry.viewportTransform)) {
+          canvas.setViewportTransform([...normalizedEntry.viewportTransform]);
+        }
+
+        setZoom(Number.isFinite(normalizedEntry.zoom) ? normalizedEntry.zoom : canvas.getZoom());
+        setActiveObject(restoredActiveObject);
+        setSelectedLayerIds(selectedObjects.map((object) => object.editorId).filter(Boolean));
+        refreshSelectionOutline(restoredActiveObject);
+        canvas.requestRenderAll();
+        syncObjects(canvas);
+
+        lastHistorySignatureRef.current = getHistorySignature(normalizedEntry);
+        persistHistoryState(canvas, undoStack, redoStack);
         isRestoringHistoryRef.current = false;
-
       });
-
     },
-
-    [activeWorkspaceId, canvas, refreshSelectionOutline, saveWorkspace, setActiveObject, syncObjects],
-
+    [canvas, persistHistoryState, refreshSelectionOutline, setActiveObject, setSelectedLayerIds, syncObjects],
   );
 
 
 
   const undo = useCallback(() => {
-
-    if (historyIndexRef.current > 0) {
-
-      loadHistoryState(historyIndexRef.current - 1);
-
+    if (isRestoringHistoryRef.current) {
+      return;
     }
 
-  }, [loadHistoryState]);
+    flushPendingHistorySave();
+
+    if (historyRef.current.length <= 1) {
+      return;
+    }
+
+    const currentEntry = historyRef.current[historyRef.current.length - 1];
+    const nextUndoHistory = historyRef.current.slice(0, -1);
+    const nextRedoHistory = [currentEntry, ...redoHistoryRef.current].slice(0, HISTORY_LIMIT);
+    const previousEntry = nextUndoHistory[nextUndoHistory.length - 1];
+
+    historyRef.current = nextUndoHistory;
+    redoHistoryRef.current = nextRedoHistory;
+    historyIndexRef.current = nextUndoHistory.length - 1;
+    setHistory(nextUndoHistory);
+    setHistoryIndex(nextUndoHistory.length - 1);
+
+    restoreHistoryEntry(previousEntry, nextUndoHistory, nextRedoHistory);
+  }, [flushPendingHistorySave, restoreHistoryEntry]);
 
 
 
   const redo = useCallback(() => {
-
-    if (historyIndexRef.current < historyRef.current.length - 1) {
-
-      loadHistoryState(historyIndexRef.current + 1);
-
+    if (isRestoringHistoryRef.current) {
+      return;
     }
 
-  }, [loadHistoryState]);
+    flushPendingHistorySave();
+
+    if (redoHistoryRef.current.length === 0) {
+      return;
+    }
+
+    const [nextEntry, ...remainingRedoHistory] = redoHistoryRef.current;
+    const nextUndoHistory = [...historyRef.current, nextEntry].slice(-HISTORY_LIMIT);
+
+    historyRef.current = nextUndoHistory;
+    redoHistoryRef.current = remainingRedoHistory;
+    historyIndexRef.current = nextUndoHistory.length - 1;
+    setHistory(nextUndoHistory);
+    setHistoryIndex(nextUndoHistory.length - 1);
+
+    restoreHistoryEntry(nextEntry, nextUndoHistory, remainingRedoHistory);
+  }, [flushPendingHistorySave, restoreHistoryEntry]);
 
 
 
@@ -2734,19 +3095,25 @@ export default function Editor({ imageUrl }) {
 
     }
 
+    flushPendingHistorySave();
+
+    const currentEntry = historyRef.current[historyRef.current.length - 1];
+
 
 
     saveWorkspace(activeWorkspaceId, {
 
-      canvasJSON: canvas.toJSON(FABRIC_SERIALIZATION_PROPS),
+      canvasJSON: currentEntry?.canvasJSON || canvas.toJSON(FABRIC_SERIALIZATION_PROPS),
 
       history: historyRef.current,
 
       historyIndex: historyIndexRef.current,
 
+      redoHistory: redoHistoryRef.current,
+
     });
 
-  }, [activeWorkspaceId, canvas, saveWorkspace]);
+  }, [activeWorkspaceId, canvas, flushPendingHistorySave, saveWorkspace]);
 
 
 
@@ -3122,7 +3489,21 @@ export default function Editor({ imageUrl }) {
 
     historyRef.current = [];
 
+    redoHistoryRef.current = [];
+
     historyIndexRef.current = -1;
+
+    lastHistorySignatureRef.current = "";
+
+    if (pendingHistorySaveRef.current) {
+
+      window.clearTimeout(pendingHistorySaveRef.current);
+
+      pendingHistorySaveRef.current = null;
+
+      pendingHistoryCanvasRef.current = null;
+
+    }
 
     // Clear any active tool
 
@@ -3190,19 +3571,6 @@ export default function Editor({ imageUrl }) {
       await exportWorkspaceImage(canvas, options);
     },
     [canvas],
-  );
-
-  const exportSelectedObject = useCallback(
-    async (options = {}) => {
-      const selectedObject = canvas?.getActiveObject() || activeObject;
-
-      if (!selectedObject) {
-        return;
-      }
-
-      await exportSingleObject(selectedObject, canvas, options);
-    },
-    [activeObject, canvas],
   );
 
   const exportAllWorkspaces = useCallback(
@@ -3500,35 +3868,45 @@ export default function Editor({ imageUrl }) {
 
 
 
+      const isModifierKey = event.ctrlKey || event.metaKey;
+
+      if (isModifierKey && event.key.toLowerCase() === "z") {
+
+        event.preventDefault();
+
+        if (event.shiftKey) {
+
+          redo();
+
+        } else {
+
+          undo();
+
+        }
+
+        return;
+
+      }
+
+
+
+      if (isModifierKey && event.key.toLowerCase() === "y") {
+
+        event.preventDefault();
+
+        redo();
+
+        return;
+
+      }
+
+
+
       if (event.ctrlKey && event.key.toLowerCase() === "d") {
 
         event.preventDefault();
 
         duplicateSelected();
-
-        return;
-
-      }
-
-
-
-      if (event.ctrlKey && event.key.toLowerCase() === "z") {
-
-        event.preventDefault();
-
-        undo();
-
-        return;
-
-      }
-
-
-
-      if (event.ctrlKey && event.key.toLowerCase() === "y") {
-
-        event.preventDefault();
-
-        redo();
 
         return;
 
@@ -3548,7 +3926,7 @@ export default function Editor({ imageUrl }) {
 
 
 
-      if (event.ctrlKey || event.metaKey) {
+      if (isModifierKey) {
 
         return;
 
@@ -3722,13 +4100,9 @@ export default function Editor({ imageUrl }) {
 
         onExportAll={exportAllWorkspaces}
 
-        onExportSelected={exportSelectedObject}
-
         onSaveProject={saveProject}
 
         zoom={zoom}
-
-        activeObject={activeObject}
 
         hasBackgroundRemoval={!!originalImageData}
 

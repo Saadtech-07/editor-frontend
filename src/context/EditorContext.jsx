@@ -19,6 +19,7 @@ export function EditorProvider({ children }) {
       canvasJSON: null,
       history: [],
       historyIndex: -1,
+      redoHistory: [],
     },
   ]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState("page-1");
@@ -79,6 +80,7 @@ export function EditorProvider({ children }) {
         canvasJSON: null,
         history: [],
         historyIndex: -1,
+        redoHistory: [],
       };
 
       setWorkspaces((prev) => {
@@ -157,6 +159,7 @@ export function EditorProvider({ children }) {
               (canvasInstance ? canvasInstance.toJSON(FABRIC_SERIALIZATION_PROPS) : workspace.canvasJSON),
             history: nextState.history ?? workspace.history,
             historyIndex: nextState.historyIndex ?? workspace.historyIndex,
+            redoHistory: nextState.redoHistory ?? workspace.redoHistory ?? [],
           };
         }),
       );

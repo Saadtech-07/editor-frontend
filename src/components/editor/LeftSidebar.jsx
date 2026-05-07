@@ -210,16 +210,6 @@ export default function LeftSidebar({
           <div className="mt-1 text-xs text-slate-500">{toolSettings.eraser.size}px</div>
         </div>
 
-        <label className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-300">
-          <span>Restore Mode</span>
-          <input
-            type="checkbox"
-            checked={toolSettings.eraser.inverted}
-            onChange={(event) => onToolSettingsChange("eraser", { inverted: event.target.checked })}
-            className="h-4 w-4 accent-teal-500"
-          />
-        </label>
-
         {!eraserSupported ? (
           <p className="text-xs text-amber-300">This Fabric build does not expose `EraserBrush`. Use the custom build with erasing support from `fabric5.fabricjs.com`.</p>
         ) : null}

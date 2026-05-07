@@ -1,9 +1,22 @@
 let fallbackId = 0;
 export const FABRIC_SERIALIZATION_PROPS = [
+  "absolutePositioned",
+  "clipPath",
+  "cropX",
+  "cropY",
+  "dirty",
   "editorId",
   "editorName",
   "editorKind",
   "excludeFromLayer",
+  "fillRule",
+  "globalCompositeOperation",
+  "hasBeenSelected",
+  "inverted",
+  "isBaseImage",
+  "objectCaching",
+  "originalNames",
+  "paintFirst",
   "erasable",
   "eraser",
 ];
