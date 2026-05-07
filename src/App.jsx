@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { EditorProvider } from "./context/EditorContext.jsx";
-import Landing from "./pages/Landing.jsx";
 import Homepage from "./pages/Homepage.jsx";
 import Editor from "./pages/Editor.jsx";
 
@@ -52,6 +51,15 @@ function ImageEditorRoutes() {
     setProjectToLoad(project);
   }, []);
 
+  const clearSelectedImage = useCallback(() => {
+    revokeObjectUrl(objectUrlsRef.current.originalUrl);
+    revokeObjectUrl(objectUrlsRef.current.processedUrl);
+
+    objectUrlsRef.current = { originalUrl: "", processedUrl: "" };
+    setProjectToLoad(null);
+    setImageState(initialImageState);
+  }, []);
+
   const setProcessedImage = useCallback((blob) => {
     if (!blob || !(blob instanceof Blob)) {
       throw new Error("Background removal did not return an image.");
@@ -86,18 +94,19 @@ function ImageEditorRoutes() {
   return (
     <EditorProvider>
       <Routes>
-        <Route path="/" element={<Landing onUpload={setOriginalImage} />} />
         <Route
-          path="/home"
+          path="/"
           element={
             <Homepage
               imageState={imageState}
               onUpload={setOriginalImage}
+              onClearImage={clearSelectedImage}
               onProcessed={setProcessedImage}
               onOpenProject={openProject}
             />
           }
         />
+        <Route path="/home" element={<Navigate to="/" replace />} />
         <Route
           path="/editor"
           element={
