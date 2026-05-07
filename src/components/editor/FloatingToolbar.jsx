@@ -13,6 +13,7 @@ import {
   Eraser
 } from "lucide-react";
 import { removeBackground } from "../../utils/imageHelpers.js";
+import { exportSingleObject } from "../../utils/exportUtils.js";
 
 export default function FloatingToolbar({ selectedObject, canvas, onUpdate, onGroup, onUngroup, onDelete, onDuplicate, onSelectTool, activeTool, originalImageData, setOriginalImageData }) {
   const toolbarRef = useRef(null);
@@ -244,40 +245,14 @@ export default function FloatingToolbar({ selectedObject, canvas, onUpdate, onGr
   };
 
   // Handle download
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!selectedObject) return;
-    
-    // Create a temporary canvas with just the selected object
-    const tempCanvas = new fabric.Canvas(null, {
-      width: selectedObject.width * (selectedObject.scaleX || 1),
-      height: selectedObject.height * (selectedObject.scaleY || 1),
-    });
-    
-    // Clone the selected object
-    selectedObject.clone((clonedObj) => {
-      // Reset position to top-left corner
-      clonedObj.set({
-        left: 0,
-        top: 0,
-        originX: 'left',
-        originY: 'top',
-      });
-      
-      tempCanvas.add(clonedObj);
-      tempCanvas.renderAll();
-      
-      // Download the canvas as image
-      const dataURL = tempCanvas.toDataURL({
-        format: 'png',
-        multiplier: 2,
-      });
-      
-      const link = document.createElement('a');
-      link.download = `${selectedObject.editorName || 'object'}.png`;
-      link.href = dataURL;
-      link.click();
-      
-      tempCanvas.dispose();
+
+    await exportSingleObject(selectedObject, canvas, {
+      format: "png",
+      quality: 1,
+      transparency: true,
+      scale: 2,
     });
   };
 

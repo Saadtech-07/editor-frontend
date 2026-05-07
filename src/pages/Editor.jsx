@@ -28,6 +28,12 @@ import EraserTool from "../tools/EraserTool.js";
 import { ensureFabricEraserSupport, hasFabricEraserSupport } from "../utils/fabricEraserSupport.js";
 
 import {
+  exportAllWorkspaceImages,
+  exportSingleObject,
+  exportWorkspaceImage,
+} from "../utils/exportUtils.js";
+
+import {
 
   FABRIC_SERIALIZATION_PROPS,
 
@@ -3172,71 +3178,49 @@ export default function Editor({ imageUrl }) {
 
 
 
-  const exportCanvas = useCallback(() => {
+  const exportCanvas = useCallback(
+    async (options = {}) => {
+      if (!canvas) {
+        return;
+      }
 
-    if (!canvas) {
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
 
-      return;
+      await exportWorkspaceImage(canvas, options);
+    },
+    [canvas],
+  );
 
-    }
+  const exportSelectedObject = useCallback(
+    async (options = {}) => {
+      const selectedObject = canvas?.getActiveObject() || activeObject;
 
+      if (!selectedObject) {
+        return;
+      }
 
+      await exportSingleObject(selectedObject, canvas, options);
+    },
+    [activeObject, canvas],
+  );
 
-    canvas.discardActiveObject();
+  const exportAllWorkspaces = useCallback(
+    async (options = {}) => {
+      if (!canvas) {
+        return;
+      }
 
+      const syncedWorkspaces = workspaces.map((workspace) =>
+        workspace.id === activeWorkspaceId
+          ? { ...workspace, canvasJSON: canvas.toJSON(FABRIC_SERIALIZATION_PROPS) }
+          : workspace,
+      );
 
-
-    const baseImage = getBaseImageObject(canvas);
-
-    const previousVisibility = baseImage?.visible;
-
-    const previousBackground = canvas.backgroundColor;
-
-
-
-    if (baseImage) {
-
-      baseImage.set({ visible: false });
-
-    }
-
-
-
-    canvas.setBackgroundColor("transparent", canvas.renderAll.bind(canvas));
-
-
-
-    const pngDataUrl = canvas.toDataURL({
-
-      format: "png",
-
-      multiplier: 2,
-
-    });
-
-
-
-    if (baseImage) {
-
-      baseImage.set({ visible: previousVisibility });
-
-    }
-
-
-
-    canvas.setBackgroundColor(previousBackground, canvas.renderAll.bind(canvas));
-
-
-
-    const downloadLink = document.createElement("a");
-
-    downloadLink.href = pngDataUrl;
-
-    downloadLink.download = "pixelforge-export.png";
-
-    downloadLink.click();
-
-  }, [canvas]);
+      await exportAllWorkspaceImages(syncedWorkspaces, canvas, options);
+    },
+    [activeWorkspaceId, canvas, workspaces],
+  );
 
 
 
@@ -3736,9 +3720,15 @@ export default function Editor({ imageUrl }) {
 
         onExport={exportCanvas}
 
+        onExportAll={exportAllWorkspaces}
+
+        onExportSelected={exportSelectedObject}
+
         onSaveProject={saveProject}
 
         zoom={zoom}
+
+        activeObject={activeObject}
 
         hasBackgroundRemoval={!!originalImageData}
 

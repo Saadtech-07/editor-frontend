@@ -1,144 +1,104 @@
-import { fabric } from 'fabric';
-import JSZip from 'jszip';
+import { fabric } from "fabric";
+import JSZip from "jszip";
+import { FABRIC_SERIALIZATION_PROPS } from "./fabricHelpers.js";
 
-/**
- * PROFESSIONAL FABRIC.JS EXPORT SYSTEM
- * Exports EXACTLY what user sees in workspace using StaticCanvas + proper rendering
- */
+const DEFAULT_WORKSPACE_BACKGROUND = "#0f172a";
+const OBJECT_EXPORT_PADDING = 0;
 
-/**
- * Export full workspace as image with options
- * @param {Object} canvas - Current fabric canvas instance
- * @param {Object} options - Export options {format, quality, transparency, scale}
- * @returns {Promise<void>}
- */
+const EXPORT_SERIALIZATION_PROPS = [
+  ...FABRIC_SERIALIZATION_PROPS,
+  "absolutePositioned",
+  "clipPath",
+  "cropX",
+  "cropY",
+  "dirty",
+  "eraser",
+  "fillRule",
+  "globalCompositeOperation",
+  "inverted",
+  "paintFirst",
+];
+
 export async function exportWorkspaceImage(canvas, options = {}) {
   if (!canvas) {
-    alert('No canvas to export');
+    alert("No canvas to export");
     return;
   }
 
-  const {
-    format = 'png', // 'png' or 'jpg'
-    quality = 1.0,
-    transparency = true,
-    scale = 2,
-  } = options;
+  const exportOptions = normalizeExportOptions(options);
 
   try {
-    // Render workspace exactly as visible
-    const imageData = await renderCanvasToDataURL(canvas, {
-      format,
-      quality,
-      transparency,
-      multiplier: scale,
-    });
-
-    downloadImage(imageData, `pixelforge-workspace-${Date.now()}.${format}`);
+    const imageData = await renderCanvasToDataURL(canvas, exportOptions);
+    downloadImage(imageData, `pixelforge-workspace-${Date.now()}.${exportOptions.extension}`);
   } catch (error) {
-    console.error('Error exporting workspace:', error);
-    alert('Error exporting workspace. Please try again.');
+    console.error("Error exporting workspace:", error);
+    alert("Error exporting workspace. Please try again.");
+    throw error;
   }
 }
 
-/**
- * Export single selected object with all properties preserved
- * @param {Object} fabricObject - Object to export
- * @param {Object} canvas - Canvas context
- * @param {Object} options - Export options
- * @returns {Promise<void>}
- */
 export async function exportSingleObject(fabricObject, canvas, options = {}) {
   if (!fabricObject) {
-    alert('No object selected to export');
+    alert("No object selected to export");
     return;
   }
 
-  const {
-    format = 'png',
-    quality = 1.0,
-    transparency = true,
-    scale = 2,
-  } = options;
+  const exportOptions = normalizeExportOptions(options);
 
   try {
-    // Clone object to temporary StaticCanvas and render
-    const imageData = await renderObjectToDataURL(fabricObject, {
-      format,
-      quality,
-      transparency,
-      multiplier: scale,
-    });
+    const imageData = await renderObjectToDataURL(fabricObject, exportOptions);
+    const objectName = fabricObject.editorName || fabricObject.name || "object";
 
-    const objectName = fabricObject.editorName || 'object';
-    downloadImage(imageData, `pixelforge-${sanitizeFilename(objectName)}-${Date.now()}.${format}`);
+    downloadImage(
+      imageData,
+      `pixelforge-${sanitizeFilename(objectName)}-${Date.now()}.${exportOptions.extension}`,
+    );
   } catch (error) {
-    console.error('Error exporting object:', error);
-    alert('Error exporting object. Please try again.');
+    console.error("Error exporting object:", error);
+    alert("Error exporting object. Please try again.");
+    throw error;
   }
 }
 
-/**
- * Export all workspace images as ZIP with options
- * @param {Array} workspaces - Array of workspace objects
- * @param {Object} canvas - Current canvas
- * @param {Object} options - Export options
- * @returns {Promise<void>}
- */
 export async function exportAllWorkspaceImages(workspaces, canvas, options = {}) {
   if (!workspaces || workspaces.length === 0) {
-    alert('No workspaces to export');
+    alert("No workspaces to export");
     return;
   }
 
-  const {
-    format = 'png',
-    quality = 1.0,
-    transparency = true,
-    scale = 2,
-  } = options;
+  const exportOptions = normalizeExportOptions(options);
 
   try {
     const zip = new JSZip();
     let exportCount = 0;
 
-    // Export current active canvas
     if (canvas) {
       try {
-        const imageData = await renderCanvasToDataURL(canvas, {
-          format,
-          quality,
-          transparency,
-          multiplier: scale,
-        });
+        const imageData = await renderCanvasToDataURL(canvas, exportOptions);
         const blob = await dataUrlToBlob(imageData);
-        zip.file(`00-current-workspace.${format}`, blob);
-        exportCount++;
+        zip.file(`00-current-workspace.${exportOptions.extension}`, blob);
+        exportCount += 1;
       } catch (error) {
-        console.error('Error exporting current workspace:', error);
+        console.error("Error exporting current workspace:", error);
       }
     }
 
-    // Export each workspace
     for (const workspace of workspaces) {
-      if (!workspace.canvasJSON) continue;
+      if (!workspace.canvasJSON) {
+        continue;
+      }
 
       try {
         const workspaceName = sanitizeFilename(workspace.name || `workspace-${workspace.id}`);
-        const imageData = await renderWorkspaceJSON(workspace.canvasJSON, {
-          format,
-          quality,
-          transparency,
-          multiplier: scale,
-        });
+        const imageData = await renderWorkspaceJSON(workspace.canvasJSON, exportOptions);
 
         if (imageData) {
           const blob = await dataUrlToBlob(imageData);
           zip.file(
-            `${String(exportCount + 1).padStart(2, '0')}-${workspaceName}.${format}`,
-            blob
+            `${String(exportCount + 1).padStart(2, "0")}-${workspaceName}.${exportOptions.extension}`,
+            blob,
           );
-          exportCount++;
+          exportCount += 1;
         }
       } catch (error) {
         console.error(`Error exporting workspace ${workspace.id}:`, error);
@@ -146,331 +106,363 @@ export async function exportAllWorkspaceImages(workspaces, canvas, options = {})
     }
 
     if (exportCount > 0) {
-      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadZip(zipBlob, `pixelforge-all-exports-${Date.now()}.zip`);
     } else {
-      alert('No content to export');
+      alert("No content to export");
     }
   } catch (error) {
-    console.error('Error creating export ZIP:', error);
-    alert('Error exporting. Please try again.');
-  }
-}
-
-/**
- * CORE RENDERING FUNCTIONS - Using StaticCanvas for all exports
- */
-
-/**
- * Render full canvas to data URL (EXACTLY what user sees)
- * @param {Object} canvas - Fabric Canvas instance
- * @param {Object} options - Render options
- * @returns {Promise<string>} - Data URL
- */
-async function renderCanvasToDataURL(canvas, options = {}) {
-  const { format = 'png', quality = 1.0, transparency = true, multiplier = 2 } = options;
-
-  if (!canvas) throw new Error('Canvas is required');
-
-  try {
-    // Use canvas.toDataURL for full rendering
-    const dataUrl = canvas.toDataURL({
-      format,
-      quality,
-      multiplier,
-      // For PNG: preserve transparency by setting background to null
-      // For JPG: will use white background automatically
-    });
-
-    return dataUrl;
-  } catch (error) {
-    console.error('Error rendering canvas:', error);
+    console.error("Error creating export ZIP:", error);
+    alert("Error exporting. Please try again.");
     throw error;
   }
 }
 
-/**
- * Render single object to data URL with ALL properties preserved
- * @param {Object} fabricObject - Object to render
- * @param {Object} options - Render options
- * @returns {Promise<string>} - Data URL
- */
-async function renderObjectToDataURL(fabricObject, options = {}) {
-  const { format = 'png', quality = 1.0, transparency = true, multiplier = 2 } = options;
-
-  if (!fabricObject) throw new Error('Object is required');
+async function renderCanvasToDataURL(canvas, options) {
+  const width = Math.max(1, Math.ceil(canvas.getWidth()));
+  const height = Math.max(1, Math.ceil(canvas.getHeight()));
+  const tempCanvas = createStaticCanvas(width, height, resolveWorkspaceBackground(canvas, options));
 
   try {
-    // Get object bounding box
-    const bbox = fabricObject.getBoundingRect();
+    await copyCanvasBackgroundAndOverlay(canvas, tempCanvas, options);
+    tempCanvas.viewportTransform = getViewportTransform(canvas);
 
-    if (bbox.width <= 0 || bbox.height <= 0) {
-      throw new Error('Object has invalid dimensions');
-    }
+    const visibleObjects = canvas.getObjects().filter((object) => object.visible !== false);
+    const clonedObjects = await Promise.all(visibleObjects.map((object) => cloneFabricObjectForExport(object)));
 
-    // Add padding for better rendering
-    const padding = 10;
-    const width = Math.ceil(bbox.width) + padding * 2;
-    const height = Math.ceil(bbox.height) + padding * 2;
-
-    // Create StaticCanvas with transparency
-    const tempCanvas = new fabric.StaticCanvas(null, {
-      width,
-      height,
-      backgroundColor: transparency ? null : '#ffffff',
+    clonedObjects.forEach((object) => {
+      object.set({
+        selectable: false,
+        evented: false,
+      });
+      object.setCoords();
+      tempCanvas.add(object);
     });
 
-    // Clone object using Fabric's proper cloning method
-    const clonedObject = await cloneFabricObjectProperly(fabricObject);
+    tempCanvas.renderAll();
+    return canvasToDataURL(tempCanvas, options);
+  } finally {
+    tempCanvas.dispose();
+  }
+}
 
-    if (!clonedObject) {
-      throw new Error('Failed to clone object');
-    }
+async function renderObjectToDataURL(fabricObject, options) {
+  const bounds = getObjectBounds(fabricObject);
 
-    // Reposition cloned object to fit in temp canvas
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+    throw new Error("Object has invalid dimensions");
+  }
+
+  const width = Math.max(1, Math.ceil(bounds.width + OBJECT_EXPORT_PADDING * 2));
+  const height = Math.max(1, Math.ceil(bounds.height + OBJECT_EXPORT_PADDING * 2));
+  const tempCanvas = createStaticCanvas(width, height, resolveObjectBackground(options));
+
+  try {
+    tempCanvas.viewportTransform = [
+      1,
+      0,
+      0,
+      1,
+      -bounds.left + OBJECT_EXPORT_PADDING,
+      -bounds.top + OBJECT_EXPORT_PADDING,
+    ];
+
+    const clonedObject = await cloneFabricObjectForExport(fabricObject);
     clonedObject.set({
-      left: clonedObject.left - bbox.left + padding,
-      top: clonedObject.top - bbox.top + padding,
+      selectable: false,
+      evented: false,
     });
+    clonedObject.setCoords();
 
-    // Add to temp canvas
     tempCanvas.add(clonedObject);
     tempCanvas.renderAll();
 
-    // Export to data URL
-    const dataUrl = tempCanvas.toDataURL({
-      format,
-      quality,
-      multiplier,
-    });
-
+    return canvasToDataURL(tempCanvas, options);
+  } finally {
     tempCanvas.dispose();
-    return dataUrl;
-  } catch (error) {
-    console.error('Error rendering object:', error);
-    throw error;
   }
 }
 
-/**
- * Render workspace from JSON to data URL
- * @param {Object} canvasJSON - Canvas JSON from workspace
- * @param {Object} options - Render options
- * @returns {Promise<string>} - Data URL
- */
-async function renderWorkspaceJSON(canvasJSON, options = {}) {
-  const { format = 'png', quality = 1.0, transparency = true, multiplier = 2 } = options;
+async function renderWorkspaceJSON(canvasJSON, options) {
+  if (!canvasJSON) {
+    throw new Error("Canvas JSON is required");
+  }
 
-  if (!canvasJSON) throw new Error('Canvas JSON is required');
+  const width = Math.max(1, Math.ceil(canvasJSON.width || 980));
+  const height = Math.max(1, Math.ceil(canvasJSON.height || 660));
+  const tempCanvas = createStaticCanvas(width, height, resolveWorkspaceBackground(null, options));
 
   try {
-    // Create temporary canvas
-    const tempCanvas = new fabric.Canvas(null, {
-      width: 980,
-      height: 660,
-      backgroundColor: transparency ? 'transparent' : '#0f172a',
-    });
-
-    // Load canvas from JSON with proper object cloning
     await new Promise((resolve, reject) => {
       tempCanvas.loadFromJSON(
         canvasJSON,
         () => {
+          tempCanvas.backgroundColor = resolveWorkspaceBackground(tempCanvas, options);
           tempCanvas.renderAll();
           resolve();
         },
-        (o, object) => {
-          // Custom loader for reviver
-        }
+        undefined,
       );
     });
 
-    // Export to data URL
-    const dataUrl = tempCanvas.toDataURL({
-      format,
-      quality,
-      multiplier,
-    });
-
+    return canvasToDataURL(tempCanvas, options);
+  } finally {
     tempCanvas.dispose();
-    return dataUrl;
-  } catch (error) {
-    console.error('Error rendering workspace JSON:', error);
-    throw error;
   }
 }
 
-/**
- * PROPER FABRIC OBJECT CLONING
- * Handles all object types: Image, Path, Group, Text, etc.
- */
+function createStaticCanvas(width, height, backgroundColor) {
+  const element = document.createElement("canvas");
+  element.width = width;
+  element.height = height;
 
-/**
- * Clone Fabric object properly preserving all properties
- * @param {Object} fabricObject - Object to clone
- * @returns {Promise<Object>} - Cloned object
- */
-async function cloneFabricObjectProperly(fabricObject) {
-  try {
-    if (!fabricObject) return null;
+  return new fabric.StaticCanvas(element, {
+    width,
+    height,
+    backgroundColor,
+    enableRetinaScaling: false,
+    preserveObjectStacking: true,
+    renderOnAddRemove: false,
+  });
+}
 
-    // Handle Image objects specially to preserve clipPath and transparency
-    if (fabricObject.type === 'image') {
-      return await cloneImageObject(fabricObject);
+async function copyCanvasBackgroundAndOverlay(sourceCanvas, targetCanvas, options) {
+  targetCanvas.backgroundColor = resolveWorkspaceBackground(sourceCanvas, options);
+
+  if (sourceCanvas.backgroundImage) {
+    targetCanvas.backgroundImage = await cloneFabricObjectForExport(sourceCanvas.backgroundImage);
+  }
+
+  if (sourceCanvas.overlayColor) {
+    targetCanvas.overlayColor = sourceCanvas.overlayColor;
+  }
+
+  if (sourceCanvas.overlayImage) {
+    targetCanvas.overlayImage = await cloneFabricObjectForExport(sourceCanvas.overlayImage);
+  }
+}
+
+async function cloneFabricObjectForExport(fabricObject) {
+  if (!fabricObject) {
+    throw new Error("Cannot clone an empty Fabric object");
+  }
+
+  const clonedObject = await new Promise((resolve, reject) => {
+    let settled = false;
+
+    const finish = (clone) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+
+      if (!clone) {
+        reject(new Error("Failed to clone Fabric object"));
+        return;
+      }
+
+      resolve(clone);
+    };
+
+    try {
+      const cloneResult = fabricObject.clone(finish, EXPORT_SERIALIZATION_PROPS);
+
+      if (cloneResult?.then) {
+        cloneResult.then(finish).catch(reject);
+      }
+    } catch (error) {
+      reject(error);
     }
+  });
 
-    // For other objects, use Fabric's clone mechanism
-    return new Promise((resolve, reject) => {
-      fabricObject.clone((cloned) => {
-        if (cloned) {
-          // Ensure all properties are preserved
-          preserveObjectProperties(fabricObject, cloned);
-          resolve(cloned);
-        } else {
-          reject(new Error('Failed to clone object'));
-        }
-      });
-    });
-  } catch (error) {
-    console.error('Error in cloneFabricObjectProperly:', error);
-    throw error;
-  }
+  await preserveRuntimeExportProperties(fabricObject, clonedObject);
+  return clonedObject;
 }
 
-/**
- * Clone image object preserving clipPath and transparency
- * @param {Object} imageObject - Fabric image object
- * @returns {Promise<Object>} - Cloned image object
- */
-async function cloneImageObject(imageObject) {
-  try {
-    return new Promise((resolve, reject) => {
-      imageObject.clone((cloned) => {
-        if (cloned) {
-          // Preserve all critical properties
-          preserveObjectProperties(imageObject, cloned);
+async function preserveRuntimeExportProperties(source, target) {
+  const directProps = {
+    angle: source.angle || 0,
+    flipX: Boolean(source.flipX),
+    flipY: Boolean(source.flipY),
+    globalCompositeOperation: source.globalCompositeOperation || "source-over",
+    height: source.height,
+    left: source.left || 0,
+    opacity: source.opacity ?? 1,
+    originX: source.originX || "left",
+    originY: source.originY || "top",
+    scaleX: source.scaleX ?? 1,
+    scaleY: source.scaleY ?? 1,
+    skewX: source.skewX || 0,
+    skewY: source.skewY || 0,
+    top: source.top || 0,
+    visible: source.visible !== false,
+    width: source.width,
+  };
 
-          // Preserve clipPath if exists
-          if (imageObject.clipPath) {
-            imageObject.clipPath.clone((clippedPath) => {
-              cloned.clipPath = clippedPath;
-              resolve(cloned);
-            });
-          } else {
-            resolve(cloned);
-          }
-        } else {
-          reject(new Error('Failed to clone image'));
-        }
-      });
-    });
-  } catch (error) {
-    console.error('Error cloning image object:', error);
-    throw error;
+  if (source.type === "image") {
+    directProps.cropX = source.cropX || 0;
+    directProps.cropY = source.cropY || 0;
   }
-}
 
-/**
- * Preserve all object properties from source to cloned object
- * @param {Object} source - Source object
- * @param {Object} target - Target cloned object
- */
-function preserveObjectProperties(source, target) {
-  if (!source || !target) return;
+  target.set(directProps);
 
-  // Preserve editor metadata
   target.editorId = source.editorId;
   target.editorName = source.editorName;
   target.editorKind = source.editorKind;
+  target.excludeFromLayer = source.excludeFromLayer;
+  target.erasable = source.erasable;
+  target.objectCaching = source.objectCaching;
+  target.dirty = true;
 
-  // Preserve visibility and transform properties
-  target.set({
-    visible: source.visible !== false,
-    opacity: source.opacity ?? 1,
-    scaleX: source.scaleX,
-    scaleY: source.scaleY,
-    angle: source.angle,
-    skewX: source.skewX,
-    skewY: source.skewY,
-    flipX: source.flipX,
-    flipY: source.flipY,
-  });
+  if (source.clipPath) {
+    if (!target.clipPath) {
+      target.clipPath = await cloneFabricObjectForExport(source.clipPath);
+    }
 
-  // Preserve clipPath
-  if (source.clipPath && !target.clipPath) {
-    target.clipPath = source.clipPath;
+    target.clipPath.absolutePositioned = Boolean(source.clipPath.absolutePositioned);
+    target.clipPath.inverted = Boolean(source.clipPath.inverted);
+    target.clipPath.setCoords();
   }
 
-  // Preserve group properties
-  if (source.group && !target.group) {
-    target.group = source.group;
+  if (source.eraser && !target.eraser) {
+    try {
+      target.eraser = await cloneFabricObjectForExport(source.eraser);
+    } catch (error) {
+      console.warn("Unable to clone eraser data for export:", error);
+    }
   }
 }
 
-/**
- * UTILITY FUNCTIONS
- */
+function getObjectBounds(fabricObject) {
+  if (typeof fabricObject.getBoundingRect === "function") {
+    return fabricObject.getBoundingRect(true, true);
+  }
 
-/**
- * Convert data URL to Blob
- * @param {string} dataUrl - Data URL string
- * @returns {Promise<Blob>} - Blob data
- */
+  return null;
+}
+
+function getViewportTransform(canvas) {
+  if (Array.isArray(canvas?.viewportTransform)) {
+    return [...canvas.viewportTransform];
+  }
+
+  return [1, 0, 0, 1, 0, 0];
+}
+
+function resolveWorkspaceBackground(canvas, options) {
+  if (options.isJpeg) {
+    return "#ffffff";
+  }
+
+  if (options.transparency) {
+    return null;
+  }
+
+  const sourceBackground = canvas?.backgroundColor;
+
+  if (
+    !sourceBackground ||
+    sourceBackground === "transparent" ||
+    sourceBackground === "rgba(0,0,0,0)" ||
+    sourceBackground === "rgba(0, 0, 0, 0)"
+  ) {
+    return DEFAULT_WORKSPACE_BACKGROUND;
+  }
+
+  return sourceBackground;
+}
+
+function resolveObjectBackground(options) {
+  if (options.isJpeg) {
+    return "#ffffff";
+  }
+
+  return options.transparency ? null : DEFAULT_WORKSPACE_BACKGROUND;
+}
+
+function canvasToDataURL(canvas, options) {
+  return canvas.toDataURL({
+    format: options.fabricFormat,
+    multiplier: options.scale,
+    quality: options.quality,
+    enableRetinaScaling: false,
+  });
+}
+
+function normalizeExportOptions(options = {}) {
+  const requestedFormat = String(options.format || "png").toLowerCase();
+  const isJpeg = requestedFormat === "jpg" || requestedFormat === "jpeg";
+  const fabricFormat = isJpeg ? "jpeg" : "png";
+  const extension = isJpeg ? "jpg" : "png";
+  const quality = clampNumber(options.quality ?? 1, 0.1, 1);
+  const scale = clampNumber(options.scale ?? options.multiplier ?? 2, 0.1, 6);
+
+  return {
+    ...options,
+    extension,
+    fabricFormat,
+    isJpeg,
+    quality,
+    scale,
+    transparency: isJpeg ? false : options.transparency !== false,
+  };
+}
+
+function clampNumber(value, min, max) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return min;
+  }
+
+  return Math.min(max, Math.max(min, numericValue));
+}
+
 function dataUrlToBlob(dataUrl) {
   return new Promise((resolve, reject) => {
     try {
-      const arr = dataUrl.split(',');
-      const mimeMatch = arr[0].match(/:(.*?);/);
+      const parts = dataUrl.split(",");
+      const mimeMatch = parts[0].match(/:(.*?);/);
 
       if (!mimeMatch) {
-        reject(new Error('Invalid data URL format'));
+        reject(new Error("Invalid data URL format"));
         return;
       }
 
       const mime = mimeMatch[1];
-      const bstr = atob(arr[1]);
-      const n = bstr.length;
-      const u8arr = new Uint8Array(n);
+      const binaryString = atob(parts[1]);
+      const bytes = new Uint8Array(binaryString.length);
 
-      for (let i = 0; i < n; i++) {
-        u8arr[i] = bstr.charCodeAt(i);
+      for (let index = 0; index < binaryString.length; index += 1) {
+        bytes[index] = binaryString.charCodeAt(index);
       }
 
-      resolve(new Blob([u8arr], { type: mime }));
+      resolve(new Blob([bytes], { type: mime }));
     } catch (error) {
       reject(error);
     }
   });
 }
 
-/**
- * Download image file
- * @param {string} dataUrl - Image data URL
- * @param {string} filename - Filename for download
- */
 function downloadImage(dataUrl, filename) {
   try {
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = dataUrl;
     link.download = filename;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   } catch (error) {
-    console.error('Error downloading image:', error);
-    alert('Error downloading image. Please try again.');
+    console.error("Error downloading image:", error);
+    alert("Error downloading image. Please try again.");
   }
 }
 
-/**
- * Download ZIP file
- * @param {Blob} zipBlob - ZIP file blob
- * @param {string} filename - Filename for download
- */
 function downloadZip(zipBlob, filename) {
   try {
     const url = URL.createObjectURL(zipBlob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
     link.download = filename;
     document.body.appendChild(link);
@@ -478,20 +470,15 @@ function downloadZip(zipBlob, filename) {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   } catch (error) {
-    console.error('Error downloading ZIP:', error);
-    alert('Error downloading ZIP. Please try again.');
+    console.error("Error downloading ZIP:", error);
+    alert("Error downloading ZIP. Please try again.");
   }
 }
 
-/**
- * Sanitize filename
- * @param {string} filename - Filename to sanitize
- * @returns {string} - Sanitized filename
- */
 function sanitizeFilename(filename) {
   return filename
-    .replace(/[^a-z0-9]/gi, '_')
-    .replace(/_+/g, '_')
+    .replace(/[^a-z0-9]/gi, "_")
+    .replace(/_+/g, "_")
     .slice(0, 50)
     .toLowerCase();
 }

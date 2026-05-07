@@ -335,82 +335,62 @@ export async function exportSingleObjectToDataUrl(fabricInstance, object) {
     throw new Error("Object has invalid bounds.");
   }
 
-  // Create temporary canvas sized to exact object bounds
   const tempCanvasElement = document.createElement("canvas");
   tempCanvasElement.width = Math.ceil(bounds.width);
   tempCanvasElement.height = Math.ceil(bounds.height);
 
   const tempCanvas = new fabricInstance.StaticCanvas(tempCanvasElement, {
-    width: bounds.width,
-    height: bounds.height,
+    width: Math.ceil(bounds.width),
+    height: Math.ceil(bounds.height),
     backgroundColor: "transparent",
+    preserveObjectStacking: true,
     renderOnAddRemove: false,
   });
 
   try {
-    let clonedObj;
+    const clonedObj = await new Promise((resolve, reject) => {
+      let settled = false;
 
-    // For images, use safe toDataURL conversion first
-    if (object.type === "image" && typeof object.toDataURL === "function") {
-      try {
-        const imageDataUrl = object.toDataURL({
-          format: "png",
-          quality: 1,
-        });
-
-        clonedObj = await new Promise((resolve, reject) => {
-          fabricInstance.Image.fromURL(imageDataUrl, (img) => {
-            if (!img) {
-              reject(new Error("Failed to load object image"));
-              return;
-            }
-            resolve(img);
-          });
-        });
-
-        clonedObj.set({
-          left: bounds.left - bounds.left,
-          top: bounds.top - bounds.top,
-          scaleX: object.scaleX || 1,
-          scaleY: object.scaleY || 1,
-          angle: object.angle || 0,
-          flipX: object.flipX || false,
-          flipY: object.flipY || false,
-          originX: "left",
-          originY: "top",
-          selectable: false,
-          evented: false,
-          objectCaching: false,
-        });
-      } catch (imageError) {
-        console.warn("Safe image export failed, fallback to clone:", imageError);
-        clonedObj = await cloneFabricObject(object);
-        if (clonedObj) {
-          clonedObj.set({
-            left: bounds.left - bounds.left,
-            top: bounds.top - bounds.top,
-            originX: "left",
-            originY: "top",
-          });
+      const finish = (clone) => {
+        if (settled) {
+          return;
         }
+
+        settled = true;
+
+        if (!clone) {
+          reject(new Error("Failed to clone object for export."));
+          return;
+        }
+
+        resolve(clone);
+      };
+
+      try {
+        const cloneResult = object.clone(finish, [
+          ...FABRIC_SERIALIZATION_PROPS,
+          "clipPath",
+          "cropX",
+          "cropY",
+        ]);
+
+        if (cloneResult?.then) {
+          cloneResult.then(finish).catch(reject);
+        }
+      } catch (error) {
+        reject(error);
       }
-    } else {
-      // For non-image objects, use standard clone
-      clonedObj = await cloneFabricObject(object);
-      if (clonedObj) {
-        clonedObj.set({
-          left: bounds.left - bounds.left,
-          top: bounds.top - bounds.top,
-          originX: "left",
-          originY: "top",
-        });
-      }
-    }
+    });
 
     if (!clonedObj) {
       throw new Error("Failed to clone object for export.");
     }
 
+    tempCanvas.viewportTransform = [1, 0, 0, 1, -bounds.left, -bounds.top];
+    clonedObj.set({
+      selectable: false,
+      evented: false,
+    });
     clonedObj.setCoords();
     tempCanvas.add(clonedObj);
     tempCanvas.renderAll();

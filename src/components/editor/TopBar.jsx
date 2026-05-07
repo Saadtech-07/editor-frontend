@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Undo, Redo, ZoomIn, ZoomOut, RotateCcw, Download, Save, Grid3x3, ArrowLeftRight } from "lucide-react";
 import ExportModal from "./ExportModal.jsx";
@@ -24,6 +24,22 @@ export default function TopBar({
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportType, setExportType] = useState("workspace");
   const [isExporting, setIsExporting] = useState(false);
+
+  const exportSourceSize = useMemo(() => {
+    if (exportType === "object" && activeObject?.getBoundingRect) {
+      const bounds = activeObject.getBoundingRect(true, true);
+
+      return {
+        width: Math.max(1, Math.ceil(bounds.width || 1)),
+        height: Math.max(1, Math.ceil(bounds.height || 1)),
+      };
+    }
+
+    return {
+      width: Math.max(1, Math.ceil(canvas?.getWidth?.() || 1)),
+      height: Math.max(1, Math.ceil(canvas?.getHeight?.() || 1)),
+    };
+  }, [activeObject, canvas, exportType]);
 
   const toggleGrid = useCallback(() => {
     if (!canvas) return;
@@ -182,17 +198,10 @@ export default function TopBar({
         </div>
 
         <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.06]">
-          <button
-            onClick={() => handleExportClick("workspace")}
-            className="grid h-8 w-8 place-items-center rounded-l-lg text-slate-200 transition hover:bg-white/[0.12] hover:text-white"
-            title="Export Current Workspace"
-          >
-            <Download size={16} />
-          </button>
           {activeObject && onExportSelected && (
             <button
               onClick={() => handleExportClick("object")}
-              className="grid h-8 w-8 place-items-center border-l border-white/10 text-slate-200 transition hover:bg-white/[0.12] hover:text-white"
+              className="grid h-8 w-8 place-items-center rounded-l-lg text-slate-200 transition hover:bg-white/[0.12] hover:text-white"
               title="Export Selected Object"
             >
               <Download size={14} />
@@ -216,6 +225,8 @@ export default function TopBar({
         onExport={handleExportConfirm}
         exportType={exportType}
         isLoading={isExporting}
+        sourceWidth={exportSourceSize.width}
+        sourceHeight={exportSourceSize.height}
       />
     </header>
   );
