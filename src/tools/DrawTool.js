@@ -86,7 +86,6 @@ export default class DrawTool {
     if (this.isProcessing || !path) {
       return;
     }
-
     this.isProcessing = true;
 
     const pointer = this.canvas.getPointer(event.e);

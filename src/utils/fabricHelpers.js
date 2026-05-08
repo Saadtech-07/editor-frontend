@@ -144,17 +144,11 @@ export function getNextObjectName(canvas, prefix = "Object") {
   return `${prefix} ${count + 1}`;
 }
 
+// DISABLED: Auto-scaling function removed to preserve original image sizes
+// Images should maintain their true original dimensions without fitting to canvas
 export function fitImageToCanvas(image, canvas, padding = 56) {
-  const availableWidth = Math.max(canvas.getWidth() - padding * 2, 160);
-  const availableHeight = Math.max(canvas.getHeight() - padding * 2, 160);
-  const scale = Math.min(availableWidth / image.width, availableHeight / image.height, 1);
-
-  image.set({
-    scaleX: scale,
-    scaleY: scale,
-    left: (canvas.getWidth() - image.width * scale) / 2,
-    top: (canvas.getHeight() - image.height * scale) / 2,
-  });
+  // No-op - images now preserve original size
+  console.warn('fitImageToCanvas is disabled to preserve original image sizes');
 }
 
 // export function cloneFabricObject(fabricObject) {

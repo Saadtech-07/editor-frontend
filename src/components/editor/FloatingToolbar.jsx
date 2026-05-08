@@ -175,8 +175,8 @@ export default function FloatingToolbar({ selectedObject, canvas, onUpdate, onGr
         processedImage.set({
           left: originalProps.left,
           top: originalProps.top,
-          scaleX: originalProps.scaleX,
-          scaleY: originalProps.scaleY,
+          scaleX: 1,
+          scaleY: 1,
           angle: originalProps.angle,
           originX: originalProps.originX,
           originY: originalProps.originY,

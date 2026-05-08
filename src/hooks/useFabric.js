@@ -17,7 +17,7 @@ export default function useFabric(canvasElementRef, imageUrl, options = {}) {
     if (!canvasElementRef.current || fabricCanvasRef.current) {
       return undefined;
     }
-
+    
     const canvas = new fabric.Canvas(canvasElementRef.current, {
       width: 980,
       height: 660,
@@ -27,6 +27,8 @@ export default function useFabric(canvasElementRef, imageUrl, options = {}) {
       skipTargetFind: false,
       fireRightClick: false,
       selectionKey: 'ctrlKey',
+      // Allow images to extend beyond canvas boundaries
+      renderOnAddRemove: true,
     });
 
     const syncSelection = () => {
@@ -90,8 +92,13 @@ export default function useFabric(canvasElementRef, imageUrl, options = {}) {
       }
 
       assignObjectMeta(image, "Object 1", "image");
-      fitImageToCanvas(image, canvas);
       image.set({
+        left: 100,
+        top: 100,
+        scaleX: 1,
+        scaleY: 1,
+        originX: 'left',
+        originY: 'top',
         selectable: true,
         evented: true,
         erasable: true,

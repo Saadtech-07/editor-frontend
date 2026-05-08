@@ -11,7 +11,6 @@ import TopBar from "../components/editor/TopBar.jsx";
 import RightPanel from "../components/editor/RightPanel.jsx";
 
 import WorkspaceManager from "../components/editor/WorkspaceManager.jsx";
-
 import { useEditor } from "../context/EditorContext.jsx";
 
 import useFabric from "../hooks/useFabric.js";
@@ -40,8 +39,6 @@ import {
   assignObjectMeta,
 
   cloneFabricObject,
-
-  fitImageToCanvas,
 
   getBaseImageObject,
 
@@ -2377,13 +2374,11 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
           return;
         }
 
-        const scaleForProcessed = currentDisplayWidth / processedImage.width;
-
         processedImage.set({
           left: currentImage.left,
           top: currentImage.top,
-          scaleX: scaleForProcessed,
-          scaleY: scaleForProcessed,
+          scaleX: 1,
+          scaleY: 1,
           angle: currentImage.angle,
           originX: currentImage.originX,
           originY: currentImage.originY,
@@ -2439,13 +2434,11 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
           return;
         }
 
-        const scaleForOriginal = currentDisplayWidth / originalImage.width;
-
         originalImage.set({
           left: currentImage.left,
           top: currentImage.top,
-          scaleX: scaleForOriginal,
-          scaleY: scaleForOriginal,
+          scaleX: 1,
+          scaleY: 1,
           angle: currentImage.angle,
           originX: currentImage.originX,
           originY: currentImage.originY,
@@ -2842,41 +2835,18 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
         }
 
-
-
-        const maxWidth = Math.max(160, canvas.getWidth() * 0.75);
-
-        const maxHeight = Math.max(160, canvas.getHeight() * 0.75);
-
-        const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
-
-
-
         image.set({
-
-          left: (canvas.getWidth() - image.width * scale) / 2,
-
-          top: (canvas.getHeight() - image.height * scale) / 2,
-
-          scaleX: scale,
-
-          scaleY: scale,
-
+          left: (canvas.getWidth() - image.width) / 2,
+          top: (canvas.getHeight() - image.height) / 2,
+          scaleX: 1,
+          scaleY: 1,
           selectable: true,
-
           evented: true,
-
           erasable: true,
-
           visible: true,
-
           opacity: 1,
-
-          hasBeenSelected: true, // Show controls immediately when pasted
-
+          hasBeenSelected: true,
         });
-
-
 
         image.editorKind = clipboardObjectRef.current.editorKind || "image";
 
@@ -2988,40 +2958,18 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
         }
 
-
-
-        const maxWidth = Math.max(160, canvas.getWidth() * 0.75);
-
-        const maxHeight = Math.max(160, canvas.getHeight() * 0.75);
-
-        const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
-
-
-
         image.set({
-
-          left: (canvas.getWidth() - (image.width || 0) * scale) / 2,
-
-          top: (canvas.getHeight() - (image.height || 0) * scale) / 2,
-
-          scaleX: scale,
-
-          scaleY: scale,
-
+          left: (canvas.getWidth() - (image.width || 0)) / 2,
+          top: (canvas.getHeight() - (image.height || 0)) / 2,
+          scaleX: 1,
+          scaleY: 1,
           selectable: true,
-
           evented: true,
-
           erasable: true,
-
           visible: true,
-
           opacity: 1,
-
-          hasBeenSelected: true, // Show controls immediately when uploaded
-
+          hasBeenSelected: true,
         });
-
 
 
         addObjectToCanvas(image, { offset: 0, prefix: "Object" });
@@ -3070,20 +3018,17 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
           }
 
-
-
-          fitImageToCanvas(image, canvas);
-
           image.set({
-
+            left: 100,
+            top: 100,
+            scaleX: 1,
+            scaleY: 1,
+            originX: 'left',
+            originY: 'top',
             selectable: true,
-
             evented: true,
-
             erasable: true,
-
             hasBeenSelected: true, // Show controls immediately when uploaded
-
           });
 
           image.setCoords();
@@ -3700,52 +3645,21 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
         
 
-        // FIX: Calculate proper scaling to fit canvas while maintaining aspect ratio
-
+        // Set the original image properties to center it without scaling
         const canvasWidth = canvas.getWidth();
-
         const canvasHeight = canvas.getHeight();
 
-        const imageWidth = originalImage.width;
-
-        const imageHeight = originalImage.height;
-
-        
-
-        // Calculate scale to fit image within canvas
-
-        const scaleX = canvasWidth / imageWidth;
-
-        const scaleY = canvasHeight / imageHeight;
-
-        const scale = Math.min(scaleX, scaleY, 1); // Don't upscale, only downscale if needed
-
-        
-
-        // Set the original image properties to center it with proper scaling
-
         originalImage.set({
-
           left: canvasWidth / 2,
-
           top: canvasHeight / 2,
-
           originX: 'center',
-
           originY: 'center',
-
-          scaleX: scale,
-
-          scaleY: scale,
-
+          scaleX: 1,
+          scaleY: 1,
           angle: 0,
-
           visible: true,
-
           selectable: true,
-
           evented: true,
-
         });
 
         

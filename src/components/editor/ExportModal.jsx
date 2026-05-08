@@ -17,7 +17,6 @@ export default function ExportModal({
   const exportWidth = Math.max(1, Math.round(sourceWidth * scale));
   const exportHeight = Math.max(1, Math.round(sourceHeight * scale));
   const qualityPercent = Math.round(quality * 100);
-
   const handleExport = useCallback(() => {
     onExport({
       format,
