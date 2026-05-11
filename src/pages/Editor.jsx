@@ -1484,6 +1484,12 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
       const selectedObject = event.selected?.[0] || canvas.getActiveObject() || null;
 
+      if (selectedObject?.type === "image" && !selectedObject.excludeFromLayer) {
+
+        selectedObject.hasBeenSelected = true;
+
+      }
+
       refreshSelectionOutline(selectedObject);
 
     };
@@ -1521,6 +1527,60 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
     const handleMouseOut = () => {
 
       setHoveredLayerId(null);
+
+    };
+
+    const keepTransformControlsVisible = (event) => {
+
+      const target = event?.target || canvas.getActiveObject();
+
+      if (!target || target.excludeFromLayer) {
+
+        return;
+
+      }
+
+      if (target.type === "image" && !target.excludeFromLayer) {
+
+        target.hasBeenSelected = true;
+
+      }
+
+      target.set({
+
+        borderColor: "#22d3ee",
+
+        cornerColor: "#22d3ee",
+
+        cornerStrokeColor: "#22d3ee",
+
+        cornerSize: 10,
+
+        cornerStyle: "rect",
+
+        transparentCorners: false,
+
+        hasBorders: true,
+
+        hasControls: true,
+
+        hasRotatingPoint: true,
+
+        rotatingPointOffset: 20,
+
+        borderDashArray: [],
+
+      });
+
+      target.setCoords();
+
+      if (canvas.getActiveObject() !== target) {
+
+        canvas.setActiveObject(target);
+
+        setActiveObject(target);
+
+      }
 
     };
 
@@ -1622,6 +1682,8 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
     canvas.on("mouse:down", handleMouseClick);
 
+    canvas.on("object:moving", keepTransformControlsVisible);
+
 
 
     return () => {
@@ -1631,6 +1693,7 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
       canvas.off("mouse:move", handleMouseMove);
       canvas.off("mouse:out", handleMouseOut);
       canvas.off("mouse:down", handleMouseClick);
+      canvas.off("object:moving", keepTransformControlsVisible);
     };
 
   }, [canvas, refreshSelectionOutline, setHoveredLayerId, objects, setActiveObject, syncObjects]);
@@ -2206,11 +2269,23 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
       }
 
-      const activeObject = canvas.getActiveObject();
+      const activeObject = canvas.getActiveObject() || event?.target || null;
 
-      refreshSelectionOutline(activeObject);
+      if (activeObject && canvas.getActiveObject() !== activeObject) {
+
+        canvas.setActiveObject(activeObject);
+
+      }
 
       syncObjects(canvas);
+
+      if (activeObject) {
+
+        setActiveObject(activeObject);
+
+      }
+
+      refreshSelectionOutline(activeObject);
 
       snapshotCanvas(canvas);
 
@@ -2286,7 +2361,7 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
     };
 
-  }, [canvas, snapshotCanvas, refreshSelectionOutline, syncObjects]);
+  }, [canvas, snapshotCanvas, refreshSelectionOutline, setActiveObject, syncObjects]);
 
 
 
