@@ -1305,7 +1305,11 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
 
 
-    if (container.clientWidth <= 0 || container.clientHeight <= 0) {
+    const nextWidth = Math.max(1, Math.round(container.clientWidth));
+
+    const nextHeight = Math.max(1, Math.round(container.clientHeight));
+
+    if (nextWidth <= 0 || nextHeight <= 0) {
 
       return;
 
@@ -1313,9 +1317,37 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
 
 
-    canvas.setWidth(container.clientWidth);
+    const previousWidth = canvas.getWidth();
 
-    canvas.setHeight(container.clientHeight);
+    const previousHeight = canvas.getHeight();
+
+    const widthDelta = nextWidth - previousWidth;
+
+    const heightDelta = nextHeight - previousHeight;
+
+    const hasSizeChanged = Math.abs(widthDelta) > 1 || Math.abs(heightDelta) > 1;
+
+    if (hasSizeChanged) {
+
+      canvas.setWidth(nextWidth);
+
+      canvas.setHeight(nextHeight);
+
+      if (baseImageInitializedRef.current && Array.isArray(canvas.viewportTransform)) {
+
+        const nextViewportTransform = [...canvas.viewportTransform];
+
+        nextViewportTransform[4] += widthDelta / 2;
+
+        nextViewportTransform[5] += heightDelta / 2;
+
+        canvas.setViewportTransform(nextViewportTransform);
+
+      }
+
+      canvas.calcOffset();
+
+    }
 
 
 
@@ -1343,9 +1375,23 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
   useEffect(() => {
 
+    let resizeFrame = null;
+
     const handleResize = () => {
 
-      updateCanvasSize();
+      if (resizeFrame) {
+
+        window.cancelAnimationFrame(resizeFrame);
+
+      }
+
+      resizeFrame = window.requestAnimationFrame(() => {
+
+        resizeFrame = null;
+
+        updateCanvasSize();
+
+      });
 
     };
 
@@ -1355,13 +1401,31 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
     window.addEventListener("resize", handleResize);
 
+    const resizeObserver =
+
+      typeof ResizeObserver !== "undefined" && canvasContainerRef.current
+
+        ? new ResizeObserver(handleResize)
+
+        : null;
+
+    resizeObserver?.observe(canvasContainerRef.current);
+
 
 
     return () => {
 
+      if (resizeFrame) {
+
+        window.cancelAnimationFrame(resizeFrame);
+
+      }
+
       window.clearTimeout(timer);
 
       window.removeEventListener("resize", handleResize);
+
+      resizeObserver?.disconnect();
 
     };
 
@@ -1561,19 +1625,12 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
 
     return () => {
-
       canvas.off("selection:created", handleSelection);
-
       canvas.off("selection:updated", handleSelection);
-
       canvas.off("selection:cleared", handleSelectionCleared);
-
       canvas.off("mouse:move", handleMouseMove);
-
       canvas.off("mouse:out", handleMouseOut);
-
       canvas.off("mouse:down", handleMouseClick);
-
     };
 
   }, [canvas, refreshSelectionOutline, setHoveredLayerId, objects, setActiveObject, syncObjects]);
@@ -4469,6 +4526,22 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
 
         onToggleBackground={handleToggleBackground}
 
+        onCanvasUpdate={() => {
+
+          if (!canvas) {
+
+            return;
+
+          }
+
+
+
+          syncObjects(canvas);
+
+          snapshotCanvas(canvas);
+
+        }}
+
       />
 
       {saveToast ? (
@@ -4576,4 +4649,3 @@ export default function Editor({ imageUrl, projectToLoad = null }) {
   );
 
 }
-
